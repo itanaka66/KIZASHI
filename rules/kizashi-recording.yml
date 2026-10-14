@@ -1,0 +1,21 @@
+# Feature recording rules consumed by KIZASHI.
+# Source metric names depend on your snmp_exporter / gnmic setup; adjust the
+# right-hand side expressions, but keep the recorded names stable.
+groups:
+  - name: kizashi-features
+    interval: 1m
+    rules:
+      - record: kizashi:if_in_errors:rate5m
+        expr: rate(ifInErrors[5m])
+      - record: kizashi:if_out_discards:rate5m
+        expr: rate(ifOutDiscards[5m])
+      - record: kizashi:if_util_in:ratio5m
+        expr: rate(ifHCInOctets[5m]) * 8 / (ifHighSpeed * 1e6) and ifHighSpeed > 0
+      - record: kizashi:if_util_out:ratio5m
+        expr: rate(ifHCOutOctets[5m]) * 8 / (ifHighSpeed * 1e6) and ifHighSpeed > 0
+      - record: kizashi:if_flaps:changes1h
+        expr: changes(ifOperStatus[1h])
+      - record: kizashi:optic_rx_dbm:avg5m
+        expr: avg_over_time(optic_rx_power_dbm[5m])
+      - record: kizashi:optic_tx_dbm:avg5m
+        expr: avg_over_time(optic_tx_power_dbm[5m])

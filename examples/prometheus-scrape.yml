@@ -1,0 +1,12 @@
+# Add to prometheus.yml. honor_labels keeps the original instance/job labels of the
+# predicted series instead of overwriting them with KIZASHI's own.
+scrape_configs:
+  - job_name: kizashi
+    honor_labels: true
+    scrape_interval: 1m
+    static_configs:
+      - targets: ["kizashi:9850"]
+
+rule_files:
+  - rules/kizashi-recording.yml
+  - rules/kizashi-alerts.yml
