@@ -1,0 +1,60 @@
+groups:
+  - name: kizashi-predictive
+    rules:
+      - alert: OpticDegradationPredicted
+        expr: kizashi_time_to_threshold_seconds{metric=~"kizashi:optic_.*"} < 72 * 3600
+        for: 30m
+        labels:
+          severity: warning
+          kizashi: predictive
+        annotations:
+          summary: >-
+            {{ $labels.instance }} {{ $labels.ifName }}: optical power expected to reach
+            {{ $labels.threshold }} in about {{ $value | humanizeDuration }}
+          description: Replace or clean the optic before it fails.
+
+      - alert: ResourceExhaustionPredicted
+        expr: kizashi_time_to_threshold_seconds{metric!~"kizashi:optic_.*"} < 24 * 3600
+        for: 30m
+        labels:
+          severity: warning
+          kizashi: predictive
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: {{ $labels.metric }} expected to reach
+            {{ $labels.threshold }} in about {{ $value | humanizeDuration }}
+
+      - alert: MetricAnomalous
+        expr: kizashi_anomaly_score{layer="baseline"} > 6
+        for: 15m
+        labels:
+          severity: info
+          kizashi: predictive
+        annotations:
+          summary: >-
+            {{ $labels.instance }} {{ $labels.ifName }}: {{ $labels.metric }} deviates from
+            its usual pattern (score {{ $value | printf "%.1f" }})
+
+  - name: kizashi-self
+    rules:
+      - alert: KizashiInferenceStalled
+        expr: time() - max(kizashi_last_inference_timestamp_seconds) > 600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: KIZASHI has not completed an inference cycle for 10 minutes.
+      - alert: KizashiQueryErrors
+        expr: sum by (target) (rate(kizashi_query_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "KIZASHI cannot query Prometheus for {{ $labels.target }}."
+      - alert: KizashiModelStale
+        expr: time() - max by (metric) (kizashi_model_trained_timestamp_seconds) > 3 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Baseline model for {{ $labels.metric }} has not been retrained for 3 days."

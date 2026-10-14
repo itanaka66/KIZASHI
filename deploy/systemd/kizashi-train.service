@@ -1,0 +1,16 @@
+[Unit]
+Description=KIZASHI baseline training
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=kizashi
+Group=kizashi
+EnvironmentFile=-/etc/default/kizashi
+ExecStart=/opt/kizashi/bin/kizashi train --config /etc/kizashi/kizashi.yaml
+StateDirectory=kizashi
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes

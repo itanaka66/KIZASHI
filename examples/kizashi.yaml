@@ -1,0 +1,61 @@
+# KIZASHI configuration example. ${VAR} and ${VAR:-default} are expanded from the environment.
+prometheus:
+  url: http://prometheus:9090
+  # Training reads weeks of history; point this at Thanos / Mimir if Prometheus retention is short.
+  long_term_url: ${KIZASHI_LONG_TERM_URL:-http://prometheus:9090}
+  timeout: 30s
+  # bearer_token_file: /var/run/secrets/prometheus-token
+
+server:
+  listen: 0.0.0.0:9850
+
+models:
+  dir: /var/lib/kizashi/models
+
+inference:
+  interval: 1m
+  window: 6h          # history used for the trend fit
+  step: 1m
+  shard:
+    total: ${KIZASHI_SHARD_TOTAL:-1}
+    index: ${KIZASHI_SHARD_INDEX:-0}
+  forecast_horizons: [1h, 24h]
+  emit_forecast_min_score: 3
+
+training:
+  period: 28d
+  step: 5m
+
+baseline:
+  band_sigma: 3
+
+trend:
+  confidence: 0.9
+  max_points: 120
+  max_horizon: 30d
+
+targets:
+  - metric: kizashi:optic_rx_dbm:avg5m
+    layers: [baseline, trend]
+    thresholds:
+      - name: rx_low
+        direction: below
+        by_label: transceiver_type
+        # Placeholders. Use each module's datasheet receiver sensitivity plus a margin (see SETUP.md).
+        values:
+          10GBASE-LR: -14.4
+          10GBASE-SR: -9.9
+          100GBASE-LR4: -10.6
+
+  - metric: kizashi:if_in_errors:rate5m
+    layers: [baseline]
+
+  - metric: kizashi:if_util_in:ratio5m
+    layers: [baseline, trend]
+    thresholds:
+      - name: util_90pct
+        direction: above
+        value: 0.9
+
+  - metric: kizashi:if_flaps:changes1h
+    layers: [baseline]
