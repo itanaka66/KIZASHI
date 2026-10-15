@@ -82,15 +82,15 @@
 
 設計書 §6 参照。
 
-- [ ] `kizashi/health.py` — サービスヘルススコア算出
+- [x] `kizashi/health.py` — サービスヘルススコア算出
   - サービス定義 YAML（サービス → 構成機器・IF → 重み）の読み込み
-  - ヘルススコア = 100 − Σ(重み × 正規化異常スコア)
-  - 冗長構成の扱い: 冗長系がすべて劣化したときだけ大きく減点
-  - 将来ヘルススコア（1h後）: 第4層の故障確率から期待値として算出
-  - 出力: `kizashi_health_score{service, horizon}`
-- [ ] サービス定義 YAML のスキーマ検証とサンプル追加
-- [ ] `rules/kizashi-alerts.yml` に `ServiceHealthDegrading` アラートを追加
-- [ ] P5 向けテスト追加（`tests/test_health.py`）
+  - ヘルススコア = 100 − Σ_groups(group_weight × effective_norm_score) / total_weight × 100
+  - 冗長構成の扱い: 同じ `redundancy_group` を持つコンポーネントは min(score) で結合 → 1本でも正常なら減点なし
+  - 将来ヘルススコア（1h後）: 第4層の `kizashi_failure_probability{horizon="1h"}` から算出
+  - 出力: `kizashi_health_score{service, horizon}` (horizon = "now" | "1h")
+- [x] サービス定義 YAML のスキーマ検証（`validate_services_spec()`）とサンプル追加（`examples/services.yaml`）
+- [x] `rules/kizashi-alerts.yml` に `ServiceHealthDegrading` / `ServiceHealthCritical` アラートを追加（閾値 80 / 50）
+- [x] P5 向けテスト追加（`tests/test_health.py` 44件）
 
 ---
 
