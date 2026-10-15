@@ -22,6 +22,10 @@ FAMILIES = {
     "kizashi_time_to_threshold_seconds": "Layer 2 estimated seconds until the trend crosses the threshold.",
     "kizashi_model_info": "Model currently used for inference (value is always 1).",
     "kizashi_model_trained_timestamp_seconds": "Unix time when the model in use was trained.",
+    # Layer 4: failure probability prediction (P4)
+    "kizashi_failure_probability": "Layer 4 calibrated failure probability [0, 1] per failure_mode and horizon.",
+    # Layer 4: SHAP top contributing features (P4)
+    "kizashi_top_contributor": "SHAP contribution value for the top-K features driving the failure probability prediction.",
 }
 
 

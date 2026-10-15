@@ -144,3 +144,93 @@ class ModelStore:
         meta = MultivariateModel.from_dict(json.loads(meta_path.read_text()))
         clf = joblib.load(clf_path)
         return meta, clf
+
+    # ------------------------------------------------------------------ failure (P4)
+
+    def _failure_paths(self, failure_mode: str, horizon_label: str, shadow: bool = False) -> tuple[Path, Path]:
+        """Return (meta JSON path, pipeline pickle path) for a failure model."""
+        suffix = ".shadow" if shadow else ""
+        safe_mode = re.sub(r"[^A-Za-z0-9_.-]", "_", failure_mode)
+        base = self.root / "failure" / safe_mode / horizon_label
+        return (
+            base.with_suffix(f"{suffix}.json"),
+            base.with_suffix(f"{suffix}.pkl"),
+        )
+
+    def save_failure(
+        self,
+        failure_mode: str,
+        horizon_label: str,
+        meta: Any,
+        pipeline: Any,
+        shadow: bool = False,
+    ) -> None:
+        """Persist FailureModelMeta (JSON) and calibrated pipeline (joblib)."""
+        try:
+            import joblib  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError("joblib is required (install lightgbm[sklearn])") from exc
+
+        meta_path, clf_path = self._failure_paths(failure_mode, horizon_label, shadow)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+
+        fd, tmp = tempfile.mkstemp(dir=meta_path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(meta.to_dict(), f)
+            os.replace(tmp, meta_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+        fd2, tmp2 = tempfile.mkstemp(dir=clf_path.parent, suffix=".pkl.tmp")
+        try:
+            os.close(fd2)
+            joblib.dump(pipeline, tmp2)
+            os.replace(tmp2, clf_path)
+        except BaseException:
+            try:
+                os.unlink(tmp2)
+            except OSError:
+                pass
+            raise
+
+    def load_failure(
+        self,
+        failure_mode: str,
+        horizon_label: str,
+        shadow: bool = False,
+    ) -> tuple[Any, Any] | None:
+        """Load (FailureModelMeta, pipeline). Returns None if not found."""
+        try:
+            import joblib  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError("joblib is required") from exc
+
+        from kizashi.models.failure import FailureModelMeta  # noqa: PLC0415
+
+        meta_path, clf_path = self._failure_paths(failure_mode, horizon_label, shadow)
+        if not meta_path.exists() or not clf_path.exists():
+            return None
+        meta = FailureModelMeta.from_dict(json.loads(meta_path.read_text()))
+        pipeline = joblib.load(clf_path)
+        return meta, pipeline
+
+    def list_failure_models(self) -> list[tuple[str, str, bool]]:
+        """Return list of (failure_mode, horizon_label, is_shadow) for saved models."""
+        failure_dir = self.root / "failure"
+        if not failure_dir.exists():
+            return []
+        result = []
+        for mode_dir in failure_dir.iterdir():
+            if not mode_dir.is_dir():
+                continue
+            for json_file in mode_dir.glob("*.json"):
+                name = json_file.stem
+                is_shadow = name.endswith(".shadow")
+                horizon = name.removesuffix(".shadow")
+                result.append((mode_dir.name, horizon, is_shadow))
+        return result

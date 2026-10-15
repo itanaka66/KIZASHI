@@ -23,7 +23,11 @@ multivariate = ["scikit-learn>=1.4"]
 loki = []
 # P3: feedback API
 feedback = ["fastapi>=0.111", "uvicorn[standard]>=0.29"]
-dev = ["pytest>=8", "scikit-learn>=1.4", "fastapi>=0.111", "httpx>=0.27"]
+# P4: supervised failure probability prediction
+p4 = ["lightgbm>=4.3", "shap>=0.45", "scikit-learn>=1.4", "joblib>=1.3"]
+# P4: MLflow model registry integration (optional)
+mlflow = ["mlflow>=2.12"]
+dev = ["pytest>=8", "scikit-learn>=1.4", "fastapi>=0.111", "httpx>=0.27", "lightgbm>=4.3", "shap>=0.45"]
 
 [project.scripts]
 kizashi = "kizashi.cli:main"
