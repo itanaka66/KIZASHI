@@ -86,3 +86,84 @@ Jira の Automation で Webhook を設定し、チケット解決時に KIZASHI 
 - `deploy/alertmanager/routing.yml` — 実際の Alertmanager 設定
 - `kizashi/sources/jira.py` — Jira SM クライアント実装
 - `rules/kizashi-alerts.yml` — アラートルール（`kizashi="predictive"` ラベル付き）
+
+---
+
+<details>
+<summary>English</summary>
+
+# ADR-004: Predictive Alert Routing and Response Workflow
+
+**Status**: Decided  
+**Date**: 2026-10-15
+
+## Background
+
+KIZASHI predictive alerts differ from outage alerts ("will fail soon" vs. "failing now"). Because false positives lead to alert fatigue, notification destinations, escalation paths, and SLAs must be clearly defined.
+
+## Notification Routing by Severity
+
+| Condition | Severity | Destination | SLA |
+|---|---|---|---|
+| Time-to-threshold > 72 h | `warning` | Slack `#network-ops` + auto Jira ticket | Acknowledge by next business day |
+| Time-to-threshold 24–72 h | `warning` | Slack `#network-ops` + Jira + email | Acknowledge within 4 hours |
+| Time-to-threshold < 24 h | `critical` | Slack `#network-oncall` + Jira + PagerDuty | Begin response within 2 hours |
+| Anomaly score > 6 (15m) | `info` | Slack `#network-monitoring` only | Next business day |
+
+## Response Workflow
+
+```
+KIZASHI → Prometheus alert → Alertmanager
+                                │
+              ┌─────────────────┼──────────────────┐
+              ▼                 ▼                  ▼
+        Slack notification  Auto Jira ticket   PagerDuty
+         (#network-ops)    (kizashi/jira.py)   (critical only)
+              │                 │
+              ▼                 ▼
+       Operator review    Assignee allocation
+              │
+    ┌─────────┴──────────┐
+    │                    │
+  True positive        False positive
+    │                    │
+  Plan maintenance     Feedback API → false-positive label
+  + order parts         used as hard negative in next training
+    │
+  Post-fix: Feedback API
+  "resolved" record
+```
+
+## Alertmanager Routing Key Points
+
+- Alerts with `kizashi="predictive"` are handled by a dedicated route.
+- `inhibit_rules`: suppress downstream device alerts when an upstream device has a predictive alert (`equal: [parent_instance]`, from `kizashi_topology_parent`).
+- During Alertmanager silence windows, KIZASHI alerts are also suppressed.
+
+For the full configuration see `deploy/alertmanager/routing.yml`.
+
+## Jira Ticket Field Mapping
+
+| Jira field | Value |
+|---|---|
+| Summary | `[KIZASHI] {instance} / {ifName}: {failure_mode} prediction (ETA: {eta})` |
+| Priority | critical → High; warning/72h+ → Medium |
+| Labels | `kizashi`, `predictive`, `{failure_mode}` |
+| Description | Grafana link + anomaly score + trend graph URL |
+| Custom fields | `instance`, `ifName`, `anomaly_score`, `time_to_threshold_hours` |
+
+## Feedback Loop via Jira Resolution
+
+When an operator sets the ticket Resolution:
+- `Fixed` / `Done` → POST "resolved" to Feedback API (treated as a positive example; failure did not occur because of proactive maintenance)
+- `Won't Fix` / `Invalid` → POST "false positive" → used as a hard negative in the next training run
+
+A Jira Automation rule sends a webhook to the KIZASHI Feedback API when a ticket is resolved.
+
+## References
+
+- `deploy/alertmanager/routing.yml` — Alertmanager configuration
+- `kizashi/sources/jira.py` — Jira SM client implementation
+- `rules/kizashi-alerts.yml` — alert rules (with `kizashi="predictive"` label)
+
+</details>

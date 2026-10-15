@@ -123,3 +123,113 @@ helm install victoria-metrics vm/victoria-metrics-single \
 
 - ディスク容量の見積もり（50 万系列 × 13 ヶ月の圧縮後サイズ確認）
 - 将来的なクラスタ版への移行タイミング
+
+---
+
+<details>
+<summary>English</summary>
+
+# ADR-001: Long-Term Storage Selection
+
+**Status**: Decided  
+**Date**: 2026-10-15
+
+## Background
+
+KIZASHI baseline training (§4.2) requires 4–8 weeks of historical data; supervised training in P4 benefits from 1+ year of history for failure label accumulation. Prometheus alone typically retains only 15–30 days, so a long-term storage backend is required.
+
+Candidates: Thanos, Mimir, **VictoriaMetrics**
+
+## Decision: Adopt VictoriaMetrics
+
+### Rationale
+
+| Criterion | VictoriaMetrics | Thanos | Mimir |
+|---|---|---|---|
+| Deployment complexity | ◎ Single binary to start | △ Sidecar + Store + Query | △ Many components |
+| Prometheus-compatible API | ◎ `/api/v1/query_range` works as-is | ◎ | ◎ |
+| Storage efficiency | ◎ 2–4× better compression than Prometheus TSDB | ○ | ○ |
+| Retention configuration | ◎ Just `-retentionPeriod=13` at launch | △ Requires compactor config | △ |
+| Horizontal scale-out | ○ (cluster edition) | ◎ | ◎ |
+| Object-storage dependency | △ (required for cluster edition) | Required | Required |
+
+VictoriaMetrics starts as a single binary, accepts Prometheus `remote_write`, and exposes the same HTTP API. KIZASHI integrates by pointing `long_term_url` at it — no code changes needed.
+
+## Architecture
+
+```
+Prometheus (15 d retention)
+  │
+  └── remote_write ──▶ VictoriaMetrics (13-month retention)
+                              │
+                              │ /api/v1/query_range (Prometheus-compatible)
+                              ▼
+                        KIZASHI (long_term_url: http://victoriametrics:8428)
+```
+
+Prometheus is used for inference (latest 6 h window); VictoriaMetrics is used for training (long-range queries).
+
+## Retention Periods
+
+| Tier | Retention | Reason |
+|---|---|---|
+| Prometheus (RAM/SSD) | 15 days | Inference window (6 h) + buffer |
+| VictoriaMetrics (local disk) | **13 months** | P1 training 4–8 w + P4 failure labels 1 y + 1-month margin |
+
+## Deployment
+
+### Single-node (initial to medium scale)
+
+```yaml
+victoria-metrics:
+  image: victoriametrics/victoria-metrics:v1.102.0
+  command:
+    - -retentionPeriod=13
+    - -storageDataPath=/data/vm
+    - -httpListenAddr=:8428
+    - -maxConcurrentInserts=16
+  ports:
+    - "8428:8428"
+  volumes:
+    - vm-data:/data/vm
+```
+
+### Prometheus remote_write configuration
+
+```yaml
+remote_write:
+  - url: http://victoriametrics:8428/api/v1/write
+    queue_config:
+      max_samples_per_send: 10000
+      capacity: 50000
+      max_shards: 30
+```
+
+### Cluster edition (large scale, 10,000+ devices)
+
+Split into vminsert / vmstorage / vmselect. Scale out vmstorage horizontally.  
+See https://docs.victoriametrics.com/Cluster-VictoriaMetrics.html
+
+## KIZASHI Configuration
+
+```yaml
+prometheus:
+  url: http://prometheus:9090              # inference (latest 6 h)
+  long_term_url: http://victoriametrics:8428  # training (13 months)
+```
+
+## Kubernetes / Helm
+
+```sh
+helm repo add vm https://victoriametrics.github.io/helm-charts/
+helm install victoria-metrics vm/victoria-metrics-single \
+  --set server.retentionPeriod=13 \
+  --set server.persistentVolume.size=500Gi
+```
+
+## Open Items
+
+- Disk capacity estimate (500k series × 13 months, post-compression)
+- Timing for migration to the cluster edition
+
+</details>
