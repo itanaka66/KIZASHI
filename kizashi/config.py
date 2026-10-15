@@ -175,6 +175,17 @@ class LLMConfig:
 
 
 @dataclass
+class FeedbackConfig:
+    label_store_path: str = "/var/lib/kizashi/labels"
+    listen_address: str = "0.0.0.0"
+    listen_port: int = 9851
+    token_env: str = "KIZASHI_FEEDBACK_TOKEN"
+    confirmed_failure_alert_names: list[str] = field(
+        default_factory=lambda: ["InterfaceDown", "DeviceUnreachable", "NodeDown", "LinkDown"]
+    )
+
+
+@dataclass
 class Config:
     prometheus: PrometheusConfig
     targets: list[TargetConfig]
@@ -190,6 +201,7 @@ class Config:
     llm: LLMConfig | None = None
     multivariate: MultivariateConfig | None = None
     loki: LokiConfig | None = None
+    feedback: FeedbackConfig | None = None
 
 
 def _threshold(raw: dict) -> Threshold:
@@ -345,6 +357,24 @@ def parse_config(raw: dict) -> Config:
         else None
     )
 
+    fb_raw = raw.get("feedback") or {}
+    feedback = (
+        FeedbackConfig(
+            label_store_path=fb_raw.get("label_store_path", "/var/lib/kizashi/labels"),
+            listen_address=fb_raw.get("listen_address", "0.0.0.0"),
+            listen_port=int(fb_raw.get("listen_port", 9851)),
+            token_env=fb_raw.get("token_env", "KIZASHI_FEEDBACK_TOKEN"),
+            confirmed_failure_alert_names=list(
+                fb_raw.get(
+                    "confirmed_failure_alert_names",
+                    ["InterfaceDown", "DeviceUnreachable", "NodeDown", "LinkDown"],
+                )
+            ),
+        )
+        if fb_raw.get("enabled", False) or fb_raw.get("label_store_path")
+        else None
+    )
+
     return Config(
         prometheus=PrometheusConfig(
             url=prom["url"].rstrip("/"),
@@ -370,4 +400,5 @@ def parse_config(raw: dict) -> Config:
         llm=llm,
         multivariate=multivariate,
         loki=loki,
+        feedback=feedback,
     )

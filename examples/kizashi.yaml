@@ -61,6 +61,36 @@ prometheus:
 #   timeout: 30s
 #   # bearer_token_file: /var/run/secrets/loki-token
 
+# Feedback API (P3) — optional. Receives Alertmanager webhooks and operator judgments.
+# Requires: pip install 'kizashi[feedback]'
+# Requires environment variable KIZASHI_FEEDBACK_TOKEN (or the name set in token_env).
+# Start with: kizashi feedback --config kizashi.yaml
+# feedback:
+#   label_store_path: /var/lib/kizashi/labels   # JSONL file at <path>/labels.jsonl
+#   listen_address: 0.0.0.0
+#   listen_port: 9851
+#   token_env: KIZASHI_FEEDBACK_TOKEN
+#   # Alert names treated as confirmed failures when received via webhook:
+#   confirmed_failure_alert_names:
+#     - InterfaceDown
+#     - DeviceUnreachable
+#     - NodeDown
+#     - LinkDown
+#
+# Alertmanager webhook route (add to deploy/alertmanager/routing.yml):
+#   - match:
+#       kizashi: predictive
+#     receiver: kizashi-feedback
+#     continue: true
+# Receiver definition:
+#   - name: kizashi-feedback
+#     webhook_configs:
+#       - url: http://kizashi-feedback:9851/api/v1/webhook/alertmanager
+#         http_config:
+#           authorization:
+#             type: Bearer
+#             credentials: <KIZASHI_FEEDBACK_TOKEN value>
+
 server:
   listen: 0.0.0.0:9850
 

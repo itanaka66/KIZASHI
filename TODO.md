@@ -32,17 +32,19 @@
 
 設計書 §8.3 参照。P4 の教師データ収集に直結するため早期着手推奨。
 
-- [ ] `kizashi/feedback.py` — Feedback API（FastAPI）
-  - Alertmanager webhook 受信エンドポイント
+- [x] `kizashi/feedback.py` — Feedback API（FastAPI）
+  - Alertmanager webhook 受信エンドポイント（KIZASHI predictive / 確定障害 / resolved を自動分類）
   - オペレーターの「正解 / 誤報 / 対応済み」判定を受け取る REST API
-  - OIDC 認証の実装（設計書 §11）
-- [ ] Feature Store への障害ラベル保存
-  - `(device, interface, failure_mode, started_at)` 形式
-  - S3 / MinIO 上の Parquet ファイルへアトミック書き込み
-- [ ] Alertmanager 履歴から確定障害ラベルを自動収集する仕組み
-  - `InterfaceDown`、`DeviceUnreachable` などの確定障害アラートを webhook で受信
-- [ ] Grafana / Slack 通知ボタンとの連携（オペレーターが予兆アラートを判定するUI）
-- [ ] P3 向けテスト追加（`tests/test_feedback.py`）
+  - Bearer トークン認証（env var）。OIDC は将来オプション
+- [x] Feature Store への障害ラベル保存（`kizashi/label_store.py`）
+  - `(fingerprint, device, interface, failure_mode, started_at, label)` 形式
+  - JSONL アペンドオンリー（Parquet/S3 は将来オプション）
+- [x] Alertmanager 履歴から確定障害ラベルを自動収集する仕組み
+  - `InterfaceDown`、`DeviceUnreachable` などの確定障害アラートを webhook で受信 → `confirmed_failure` ラベル自動付与
+- [x] `kizashi feedback` CLI サブコマンド追加（`kizashi/cli.py`）
+- [x] `FeedbackConfig` を `kizashi/config.py` に追加（`examples/kizashi.yaml` に Alertmanager routing 例付きコメント）
+- [x] P3 向けテスト追加（`tests/test_feedback.py`、26件）
+- [ ] Grafana / Slack 通知ボタンとの連携（オペレーターが予兆アラートを判定するUI）— 将来オプション
 
 ---
 

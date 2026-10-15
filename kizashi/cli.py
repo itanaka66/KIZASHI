@@ -77,6 +77,42 @@ def _train(args) -> int:
     return 0
 
 
+def _feedback(args) -> int:
+    config = load_config(args.config)
+    if config.feedback is None:
+        log.error(
+            "No feedback section in config. Add 'feedback:' with at least "
+            "'label_store_path' to enable the Feedback API."
+        )
+        return 1
+
+    import os
+
+    try:
+        import uvicorn
+    except ImportError:
+        log.error("uvicorn is required for 'kizashi feedback'. Install with: pip install 'kizashi[feedback]'")
+        return 1
+
+    from kizashi.feedback import build_from_config
+
+    try:
+        app = build_from_config(config)
+    except RuntimeError as e:
+        log.error("%s", e)
+        return 1
+
+    fb = config.feedback
+    log.info(
+        "Starting Feedback API on %s:%d (store: %s)",
+        fb.listen_address,
+        fb.listen_port,
+        fb.label_store_path,
+    )
+    uvicorn.run(app, host=fb.listen_address, port=fb.listen_port)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="kizashi", description="AI failure prediction for Prometheus")
     parser.add_argument("--log-level", default="INFO")
@@ -95,6 +131,10 @@ def main(argv: list[str] | None = None) -> int:
         help="skip topology change detection and store update",
     )
     tr.set_defaults(func=_train)
+
+    fb_cmd = sub.add_parser("feedback", help="run the Feedback API server (P3)")
+    fb_cmd.add_argument("--config", "-c", default="kizashi.yaml")
+    fb_cmd.set_defaults(func=_feedback)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
