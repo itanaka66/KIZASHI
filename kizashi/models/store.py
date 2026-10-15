@@ -13,6 +13,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from kizashi.models.baseline import BaselineModel
 
@@ -83,3 +84,63 @@ class ModelStore:
         )
         self._cache[metric] = (mtime, bset)
         return bset
+
+    # ---------------------------------------------------------------- multivariate
+
+    def _mv_paths(self, group_key: str) -> tuple[Path, Path]:
+        """Return (metadata JSON path, classifier pickle path) for a group key."""
+        name = _filename(group_key).removesuffix(".json")
+        base = self.root / "multivariate" / name
+        return base.with_suffix(".json"), base.with_suffix(".pkl")
+
+    def save_multivariate(self, group_key: str, meta: Any, clf: Any) -> None:
+        """Persist MultivariateModel metadata (JSON) and IsolationForest (joblib)."""
+        try:
+            import joblib  # noqa: PLC0415 — bundled with scikit-learn
+        except ImportError as exc:
+            raise RuntimeError("joblib is required (install scikit-learn)") from exc
+
+        meta_path, clf_path = self._mv_paths(group_key)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write metadata JSON atomically
+        fd, tmp = tempfile.mkstemp(dir=meta_path.parent, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(meta.to_dict(), f)
+            os.replace(tmp, meta_path)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+        # Write classifier via joblib (atomic via temp file)
+        fd2, tmp2 = tempfile.mkstemp(dir=clf_path.parent, suffix=".pkl.tmp")
+        try:
+            os.close(fd2)
+            joblib.dump(clf, tmp2)
+            os.replace(tmp2, clf_path)
+        except BaseException:
+            try:
+                os.unlink(tmp2)
+            except OSError:
+                pass
+            raise
+
+    def load_multivariate(self, group_key: str) -> tuple[Any, Any] | None:
+        """Load (MultivariateModel, IsolationForest). Returns None if not found."""
+        try:
+            import joblib  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError("joblib is required (install scikit-learn)") from exc
+
+        from kizashi.models.multivariate import MultivariateModel  # noqa: PLC0415
+
+        meta_path, clf_path = self._mv_paths(group_key)
+        if not meta_path.exists() or not clf_path.exists():
+            return None
+        meta = MultivariateModel.from_dict(json.loads(meta_path.read_text()))
+        clf = joblib.load(clf_path)
+        return meta, clf

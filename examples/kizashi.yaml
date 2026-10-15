@@ -34,6 +34,63 @@ prometheus:
 #   model: qwen2.5:7b
 #   timeout: 30s
 
+# Multivariate anomaly detection (P2) — requires scikit-learn.
+# One IsolationForest model is trained per (device_role × vendor) group.
+# Feature metrics are fetched from Prometheus; values are aggregated per device.
+# multivariate:
+#   contamination: 0.05   # expected fraction of anomalous devices
+#   min_group_samples: 10 # minimum devices per group to train a model
+#   features:
+#     - name: cpu_util
+#       metric: 'avg by (instance) (kizashi:cpu_util:avg5m)'
+#       aggregation: last
+#     - name: memory_util
+#       metric: 'avg by (instance) (kizashi:memory_util:avg5m)'
+#       aggregation: last
+#     - name: temperature_max
+#       metric: 'max by (instance) (kizashi:device_temp_celsius:avg5m)'
+#       aggregation: max
+#     - name: if_error_total
+#       metric: 'sum by (instance) (kizashi:if_in_errors:rate5m)'
+#       aggregation: sum
+
+# Loki log integration (P2) — no extra Python deps required.
+# When set, DrainTree log template mining runs alongside metric-based inference.
+# loki:
+#   url: http://loki:3100
+#   timeout: 30s
+#   # bearer_token_file: /var/run/secrets/loki-token
+
+# Feedback API (P3) — optional. Receives Alertmanager webhooks and operator judgments.
+# Requires: pip install 'kizashi[feedback]'
+# Requires environment variable KIZASHI_FEEDBACK_TOKEN (or the name set in token_env).
+# Start with: kizashi feedback --config kizashi.yaml
+# feedback:
+#   label_store_path: /var/lib/kizashi/labels   # JSONL file at <path>/labels.jsonl
+#   listen_address: 0.0.0.0
+#   listen_port: 9851
+#   token_env: KIZASHI_FEEDBACK_TOKEN
+#   # Alert names treated as confirmed failures when received via webhook:
+#   confirmed_failure_alert_names:
+#     - InterfaceDown
+#     - DeviceUnreachable
+#     - NodeDown
+#     - LinkDown
+#
+# Alertmanager webhook route (add to deploy/alertmanager/routing.yml):
+#   - match:
+#       kizashi: predictive
+#     receiver: kizashi-feedback
+#     continue: true
+# Receiver definition:
+#   - name: kizashi-feedback
+#     webhook_configs:
+#       - url: http://kizashi-feedback:9851/api/v1/webhook/alertmanager
+#         http_config:
+#           authorization:
+#             type: Bearer
+#             credentials: <KIZASHI_FEEDBACK_TOKEN value>
+
 server:
   listen: 0.0.0.0:9850
 

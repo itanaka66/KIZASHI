@@ -1,0 +1,67 @@
+groups:
+  - name: kizashi-topology
+    interval: 5m
+    rules:
+      # ──────────────────────────────────────────────────────────────────────
+      # LLDP-based topology: derive parent-child relationships from LLDP neighbor data.
+      #
+      # Prerequisites:
+      #   snmp_exporter must walk LLDP-MIB on all devices.
+      #   Required OIDs:
+      #     - lldpRemSysName  (job="snmp", label: lldpRemLocalPortNum, lldpRemIndex)
+      #     - lldpLocSysName  (job="snmp")
+      #
+      # How it works:
+      #   Each device reports its LLDP neighbors as separate time series.
+      #   We create kizashi_topology_parent{instance, parent_instance} = 1
+      #   by label_replacing lldpRemSysName → parent_instance.
+      #
+      # Usage in Alertmanager inhibit_rules:
+      #   Join this metric onto KIZASHI alert rules so that the "parent_instance"
+      #   label is carried on each alert. Then use equal: [parent_instance] in
+      #   inhibit_rules to suppress child alerts when the parent fires critical.
+      # ──────────────────────────────────────────────────────────────────────
+
+      # 1. kizashi_topology_parent{instance="child", parent_instance="parent"} = 1
+      #    Records: "child has parent as its LLDP upstream neighbor"
+      - record: kizashi_topology_parent
+        expr: |
+          label_replace(
+            lldpRemSysName{job=~"snmp.*"} * 0 + 1,
+            "parent_instance", "$1", "lldpRemSysName", "(.*)"
+          )
+        labels:
+          source: lldp
+
+      # 2. CDP variant (Cisco only) — uses cdpCacheDeviceId
+      #    Enable when snmp_exporter walks CISCO-CDP-MIB.
+      # - record: kizashi_topology_parent
+      #   expr: |
+      #     label_replace(
+      #       cdpCacheDeviceId{job=~"snmp.*"} * 0 + 1,
+      #       "parent_instance", "$1", "cdpCacheDeviceId", "(.*)"
+      #     )
+      #   labels:
+      #     source: cdp
+
+  - name: kizashi-multivariate
+    rules:
+      # Alerting on multivariate anomaly scores (layer="multivariate").
+      # This rule fires when KIZASHI's IsolationForest detects a device-level anomaly.
+      - alert: DeviceMultivariateAnomaly
+        expr: kizashi_anomaly_score{layer="multivariate"} > 5
+        for: 15m
+        labels:
+          severity: warning
+          kizashi: predictive
+        annotations:
+          summary: >-
+            {{ $labels.instance }}: multivariate anomaly detected
+            (score {{ $value | printf "%.1f" }}, group {{ $labels.group_key }})
+          description: >-
+            Device-level metrics (CPU, memory, temperature, error rates) deviate
+            from the group baseline. Check the Grafana multivariate panel for details.
+
+      # Topology-aware inhibition: suppress child alerts when a parent fires.
+      # To enable: add parent_instance label to all KIZASHI alerts by joining
+      # kizashi_topology_parent in the alert expr (see rules/kizashi-alerts.yml).

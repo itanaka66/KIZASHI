@@ -136,6 +136,27 @@ class AlertmanagerConfig:
 
 
 @dataclass
+class FeatureMetricConfig:
+    name: str       # feature display name used in model metadata
+    metric: str     # PromQL expression (may include label matchers)
+    aggregation: str = "last"   # "last" | "mean" | "max" | "sum" over training window
+
+
+@dataclass
+class MultivariateConfig:
+    features: list[FeatureMetricConfig]
+    contamination: float = 0.05
+    min_group_samples: int = 10
+
+
+@dataclass
+class LokiConfig:
+    url: str
+    timeout: float = 30.0
+    bearer_token_file: str | None = None
+
+
+@dataclass
 class JiraConfig:
     url: str
     email: str
@@ -154,6 +175,17 @@ class LLMConfig:
 
 
 @dataclass
+class FeedbackConfig:
+    label_store_path: str = "/var/lib/kizashi/labels"
+    listen_address: str = "0.0.0.0"
+    listen_port: int = 9851
+    token_env: str = "KIZASHI_FEEDBACK_TOKEN"
+    confirmed_failure_alert_names: list[str] = field(
+        default_factory=lambda: ["InterfaceDown", "DeviceUnreachable", "NodeDown", "LinkDown"]
+    )
+
+
+@dataclass
 class Config:
     prometheus: PrometheusConfig
     targets: list[TargetConfig]
@@ -167,6 +199,9 @@ class Config:
     alertmanager: AlertmanagerConfig | None = None
     jira: JiraConfig | None = None
     llm: LLMConfig | None = None
+    multivariate: MultivariateConfig | None = None
+    loki: LokiConfig | None = None
+    feedback: FeedbackConfig | None = None
 
 
 def _threshold(raw: dict) -> Threshold:
@@ -292,6 +327,54 @@ def parse_config(raw: dict) -> Config:
         else None
     )
 
+    mv_raw = raw.get("multivariate") or {}
+    mv_features_raw = mv_raw.get("features") or []
+    multivariate = (
+        MultivariateConfig(
+            features=[
+                FeatureMetricConfig(
+                    name=f["name"],
+                    metric=f["metric"],
+                    aggregation=f.get("aggregation", "last"),
+                )
+                for f in mv_features_raw
+            ],
+            contamination=float(mv_raw.get("contamination", 0.05)),
+            min_group_samples=int(mv_raw.get("min_group_samples", 10)),
+        )
+        if mv_features_raw
+        else None
+    )
+
+    loki_raw = raw.get("loki") or {}
+    loki = (
+        LokiConfig(
+            url=loki_raw["url"].rstrip("/"),
+            timeout=parse_duration(loki_raw.get("timeout", "30s")),
+            bearer_token_file=loki_raw.get("bearer_token_file"),
+        )
+        if loki_raw.get("url")
+        else None
+    )
+
+    fb_raw = raw.get("feedback") or {}
+    feedback = (
+        FeedbackConfig(
+            label_store_path=fb_raw.get("label_store_path", "/var/lib/kizashi/labels"),
+            listen_address=fb_raw.get("listen_address", "0.0.0.0"),
+            listen_port=int(fb_raw.get("listen_port", 9851)),
+            token_env=fb_raw.get("token_env", "KIZASHI_FEEDBACK_TOKEN"),
+            confirmed_failure_alert_names=list(
+                fb_raw.get(
+                    "confirmed_failure_alert_names",
+                    ["InterfaceDown", "DeviceUnreachable", "NodeDown", "LinkDown"],
+                )
+            ),
+        )
+        if fb_raw.get("enabled", False) or fb_raw.get("label_store_path")
+        else None
+    )
+
     return Config(
         prometheus=PrometheusConfig(
             url=prom["url"].rstrip("/"),
@@ -315,4 +398,7 @@ def parse_config(raw: dict) -> Config:
         alertmanager=alertmanager,
         jira=jira,
         llm=llm,
+        multivariate=multivariate,
+        loki=loki,
+        feedback=feedback,
     )
