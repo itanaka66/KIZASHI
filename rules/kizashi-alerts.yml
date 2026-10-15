@@ -54,6 +54,36 @@ groups:
             {{ $labels.threshold }} in about {{ $value | humanizeDuration }}
           description: Parent device {{ $labels.parent_instance }}
 
+  - name: kizashi-health
+    rules:
+      # Fires when a service's current health score drops below 80 (warning) or 50 (critical).
+      # The score is 0–100: 100 = fully healthy, 0 = all components anomalous.
+      - alert: ServiceHealthDegrading
+        expr: kizashi_health_score{horizon="now"} < 80
+        for: 10m
+        labels:
+          severity: warning
+          kizashi: health
+        annotations:
+          summary: >-
+            Service {{ $labels.service }} health score is {{ $value | printf "%.0f" }}/100
+          description: >-
+            KIZASHI service health score has been below 80 for 10 minutes.
+            Check kizashi_anomaly_score for the components in this service.
+
+      - alert: ServiceHealthCritical
+        expr: kizashi_health_score{horizon="now"} < 50
+        for: 5m
+        labels:
+          severity: critical
+          kizashi: health
+        annotations:
+          summary: >-
+            Service {{ $labels.service }} health is critical (score {{ $value | printf "%.0f" }}/100)
+          description: >-
+            Multiple components of service {{ $labels.service }} are severely anomalous.
+            Immediate investigation required.
+
   - name: kizashi-self
     rules:
       - alert: KizashiInferenceStalled

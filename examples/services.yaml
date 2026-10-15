@@ -1,0 +1,79 @@
+# Service health score definitions for KIZASHI P5.
+#
+# Each service maps to a set of network components (devices + interfaces).
+# KIZASHI computes kizashi_health_score{service, horizon} by aggregating the
+# Layer 1–4 anomaly scores and failure probabilities of the listed components.
+#
+# Health score formula:
+#   score = 100 - Σ_groups(group_weight × effective_norm_score) / total_weight × 100
+#
+# Redundancy groups
+# -----------------
+# Components sharing the same `redundancy_group` name are treated as a
+# redundant pair/set. The group only penalises significantly when ALL members
+# are degraded (effective_score = min(member_scores)).
+# Leave `redundancy_group` empty (or omit it) for non-redundant components.
+#
+# Weights
+# -------
+# Relative importance. Higher weight = more impact on the health score.
+# Weights are normalised internally, so the exact unit does not matter —
+# only ratios between components matter.
+
+services:
+
+  # ── WAN core ────────────────────────────────────────────────────────────────
+  - name: "WAN Core"
+    components:
+      # Primary and secondary uplinks form a redundant pair.
+      # The service only degrades significantly if BOTH links are anomalous.
+      - instance: "router1:9116"
+        if_name: "Gi0/0/0"
+        weight: 2.0
+        redundancy_group: wan_uplink
+
+      - instance: "router2:9116"
+        if_name: "Gi0/0/0"
+        weight: 2.0
+        redundancy_group: wan_uplink
+
+      # BGP peering links — non-redundant, each contributes independently
+      - instance: "router1:9116"
+        if_name: "Gi0/1/0"
+        weight: 1.0
+
+      - instance: "router2:9116"
+        if_name: "Gi0/1/0"
+        weight: 1.0
+
+  # ── Distribution layer — Floor 1 ────────────────────────────────────────────
+  - name: "Distribution Floor 1"
+    components:
+      - instance: "dist-sw-fl1-a:9116"
+        if_name: "Te1/0/1"
+        weight: 1.5
+        redundancy_group: dist_fl1_uplink
+
+      - instance: "dist-sw-fl1-b:9116"
+        if_name: "Te1/0/1"
+        weight: 1.5
+        redundancy_group: dist_fl1_uplink
+
+      - instance: "dist-sw-fl1-a:9116"
+        if_name: "Gi1/0/1"
+        weight: 0.5
+
+  # ── Access layer — Floor 1 ──────────────────────────────────────────────────
+  - name: "Access Floor 1"
+    components:
+      - instance: "acc-sw-fl1-1:9116"
+        if_name: "Gi0/0"
+        weight: 1.0
+
+      - instance: "acc-sw-fl1-2:9116"
+        if_name: "Gi0/0"
+        weight: 1.0
+
+      - instance: "acc-sw-fl1-3:9116"
+        if_name: "Gi0/0"
+        weight: 1.0

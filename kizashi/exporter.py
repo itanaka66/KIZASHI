@@ -26,6 +26,8 @@ FAMILIES = {
     "kizashi_failure_probability": "Layer 4 calibrated failure probability [0, 1] per failure_mode and horizon.",
     # Layer 4: SHAP top contributing features (P4)
     "kizashi_top_contributor": "SHAP contribution value for the top-K features driving the failure probability prediction.",
+    # P5: service health scores
+    "kizashi_health_score": "Service health score [0, 100]. 100 = fully healthy. Labels: service, horizon (now|1h).",
 }
 
 
