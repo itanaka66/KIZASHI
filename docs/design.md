@@ -26,11 +26,26 @@ Splunk ITSI（Predictive Analytics / Adaptive Thresholding）や Splunk MLTK が
 3. **説明可能性**: すべての予兆アラートに「どのメトリクスが、どれだけ、なぜ」を付ける。
    根拠のないスコアだけのアラートは運用で信用されない。
 
-### 実装状況（2026-10-14 時点）
+### 実装状況（2026-10-15 時点）
 
-P0（基盤）と P1（第 1 層・第 2 層）を実装済み。Model Registry は P1 ではファイルベース
-（`models/baseline/<metric>.json`、アトミック書き込み・ホットリロード対応）で、MLflow 化は P4 で行う。
-Feedback API、第 3 層以降、ヘルススコアは未実装。
+**P0〜P5 すべて実装済み。** 各フェーズの主な実装ファイルを下表に示す。
+
+| フェーズ | 状態 | 主な実装ファイル |
+|---|---|---|
+| P0 基盤 | ✅ 完了 | `inference.py`, `exporter.py`, `sources/prometheus.py`, `config.py`, `cli.py` |
+| P1 統計層 | ✅ 完了 | `models/baseline.py`, `models/trend.py`, `trainer.py`, `rules/kizashi-alerts.yml` |
+| P2 教師なし異常検知 | ✅ 完了 | `models/multivariate.py`, `models/logpattern.py`, `sources/loki.py`, `topology.py` |
+| P3 フィードバック | ✅ 完了 | `feedback.py`, `label_store.py`, `rules/kizashi-alerts.yml` |
+| P4 教師あり故障確率 | ✅ 完了 | `models/failure.py`, `explain.py`, `models/registry.py` |
+| P5 サービスヘルス | ✅ 完了 | `health.py`, `examples/services.yaml`, `rules/kizashi-alerts.yml` |
+
+**実装上の主な設計判断（設計書との差分）:**
+- **Feature Store**: 当初 S3/MinIO + Parquet を想定していたが、ラベル量が少ない初期段階では JSONL
+  アペンドオンリーファイル（`LabelStore`）をメインにした。Parquet 移行は将来オプション。
+- **Model Registry**: P0〜P3 はファイルベース（`models/<layer>/<key>.json` + `.pkl`、アトミック書き込み・
+  ホットリロード対応）。P4 で MLflow 連携を追加（`models/registry.py`）したが任意依存のまま。
+- **Feedback API 認証**: OIDC は将来オプション。現在は静的 Bearer トークン（env var）。
+- **Python バージョン**: 3.12 ではなく 3.11 以上（`pyproject.toml: requires-python = ">=3.11"`）。
 
 ---
 
@@ -60,7 +75,7 @@ Feedback API、第 3 層以降、ヘルススコアは未実装。
        └─────────▶│  │ (常駐)    │ │ (日次Job)  │ │ API       │ │
                   │  └─────┬─────┘ └─────┬──────┘ └─────┬─────┘ │
                   │        └────── Model Registry / Feature Store ┘
-                  │               (MLflow + S3/MinIO Parquet)     │
+                  │         (ファイルベース + MLflow 任意 + JSONL)    │
                   └──────────────────────────────────────────────┘
                                      │
                                      ▼
@@ -74,8 +89,8 @@ Feedback API、第 3 層以降、ヘルススコアは未実装。
 | **Inference** | 1 分周期で直近ウィンドウを PromQL で取得し、全モデルで推論、結果を `/metrics` で公開 | Deployment（常駐、シャーディング可） |
 | **Trainer** | 長期ストレージから学習データを抽出し、モデルを学習・評価・登録 | CronJob（日次 / 週次） |
 | **Feedback API** | Alertmanager webhook とオペレーターの判定（正解 / 誤報）を受け取り、ラベルとして保存 | Deployment |
-| **Model Registry** | モデル成果物、バージョン、評価指標の管理 | MLflow |
-| **Feature Store** | 学習用の特徴量スナップショットと障害ラベル | S3 / MinIO 上の Parquet |
+| **Model Registry** | モデル成果物、バージョン、評価指標の管理 | ファイルベース（`models/` ディレクトリ）+ MLflow（P4〜、任意） |
+| **Feature Store** | 学習用の特徴量スナップショットと障害ラベル | JSONL アペンドオンリー（`LabelStore`）。Parquet / S3 は将来オプション |
 
 ---
 
@@ -160,7 +175,7 @@ groups:
 
 ## 5. 予兆検知モデル（4+1 層）
 
-### 5.1 第 1 層: 適応しきい値（統計ベースライン）
+### 5.1 第 1 層: 適応しきい値（統計ベースライン）✅ 実装済み
 
 **学習データ不要・初日から動く層。** Splunk の Adaptive Thresholding に相当する。
 
@@ -168,7 +183,8 @@ groups:
   残差のロバスト標準偏差（MAD）から上下バンドを算出する。
   履歴が 2 週間以上あれば週次（168 ビン）、2 日以上 2 週間未満なら日次（24 ビン）のプロファイルを使う。
   中央値ベースなので、過去の障害による外れ値でベースラインが歪みにくい。
-  （P1 実装。複数の季節性が重なる系列で精度が足りない場合は、STL / Holt-Winters への置き換えを検討する）
+  複数の季節性が重なる系列で精度が足りない場合は、STL / Holt-Winters への置き換えを検討する。
+  （実装: `kizashi/models/baseline.py`）
 - 異常スコア: `|実測値 - 期待値| / (1.4826 × MAD)`（ロバスト z スコア）
 - 祝日やメンテナンス期間は学習から除外する（Alertmanager の silence 情報を参照）。
 
@@ -178,44 +194,53 @@ groups:
 >   / stddev_over_time(kizashi:if_util_in:ratio5m[1h] offset 1w)
 > ```
 
-### 5.2 第 2 層: トレンド予測としきい値到達時間
+### 5.2 第 2 層: トレンド予測としきい値到達時間 ✅ 実装済み
 
 **「あと何時間で限界値に達するか」** を出す層。光パワー劣化・メモリリーク・容量逼迫に有効。
 
-- 手法: ロバスト線形回帰（Theil-Sen）を基本とし、季節性のある系列は ETS / Prophet を使う。
+- 手法: 加重最小二乗線形回帰（`models/trend.py`）を基本とし、信頼区間付きで予測する。
+  設計当初は Theil-Sen / ETS / Prophet を候補としていたが、軽量性を優先して WLS を採用。
   Prometheus 標準の `predict_linear()` は外れ値に弱く信頼区間も出ないため、それを置き換える位置づけ。
 - 出力: 予測値と予測区間（下限・上限）、限界値（例: Rx -14 dBm、メモリ空き 5%）に達するまでの推定秒数。
-- 限界値は機器・モジュールの型番ごとの定義ファイル（§10）で管理する。
+- 限界値はターゲット設定の `thresholds` セクション（`kizashi.yaml`）で管理する。
 
-### 5.3 第 3 層: 多変量異常検知
+### 5.3 第 3 層: 多変量異常検知 ✅ 実装済み
 
 **単体のメトリクスでは正常範囲でも、組み合わせが異常** というケースを捉える層。
 例: トラフィックは平常なのに CPU だけ高い、温度上昇とファン回転数低下が同時に起きている。
 
 - 手法: 機器の役割（コア / ディストリビューション / アクセス）× ベンダー機種ごとに
   **グループ単位の共有モデル** を学習する。系列ごとにモデルを持つと数十万モデルになり運用できないため。
-  - 標準: Isolation Forest（軽量・解釈しやすい）
+  - 標準: **Isolation Forest**（実装済み: `models/multivariate.py`。軽量・解釈しやすい）
   - 大規模環境向けオプション: LSTM / Transformer オートエンコーダ（再構成誤差を異常スコアに使う）
 - 入力: 機器単位の特徴量ベクトル（CPU、メモリ、温度、全 IF のエラー率合計、ネイバー遷移数など）を 1 分ごとに作成。
+- NaN は列中央値で補完。スコアは `decision_function` をロジスティック変換で 0〜10 スケールに正規化。
 
-### 5.4 第 4 層: 故障確率予測（教師あり）
+### 5.4 第 4 層: 故障確率予測（教師あり）✅ 実装済み
 
 **「今後 H 時間以内にこの機器 / IF が故障する確率」** を出す層。ITSI Predictive Analytics に相当する。
 障害ラベルが一定数（目安: 故障モードあたり 30 件以上）たまってから有効化する。
 
 - 手法: 勾配ブースティング（LightGBM）による二値分類。故障モードごとにモデルを分ける。
+  （実装: `models/failure.py`、SHAP 説明: `explain.py`、MLflow 連携: `models/registry.py`）
 - 特徴量: 第 1〜3 層の出力（異常スコア、トレンドの傾き、到達時間）に加え、
   複数ウィンドウ（1h / 6h / 24h / 7d）での平均・最大・傾き・変化回数、機種・設置年数などの静的属性。
 - 予測先: `horizon` = 1h / 24h / 7d。
-- クラス不均衡: 故障は稀なので、負例のダウンサンプリングとクラス重み付けを行う。
+- クラス不均衡: 負例ダウンサンプリング（デフォルト 10:1）と `scale_pos_weight` で対処。
   評価は Precision-Recall で行う（Accuracy は使わない）。
-- 確率の較正: Isotonic Regression で、出力確率が実際の故障率と合うように補正する。
+- 確率の較正: `CalibratedClassifierCV(cv='prefit', method='isotonic')` で補正。
+- モデル昇格条件: ウォークフォワード検証で Precision@0.5 ≥ 0.5、Recall ≥ 0.6、リードタイム中央値 ≥ 1h。
+- PSI ドリフト検知: 学習時の特徴量分布（パーセンタイル）を保存し、次回学習時に比較。
+  PSI ≥ 0.2 の場合は新モデルをシャドーモードで保存（`FailureModelMeta.is_shadow = True`）。
+- MLflow 連携はオプション（`kizashi[mlflow]`）。未導入の場合は `NoOpRegistry` を使用。
 
-### 5.5 補助層: ログパターン異常
+### 5.5 補助層: ログパターン異常 ✅ 実装済み
 
 - Loki から syslog を取得し、Drain アルゴリズムでテンプレート（例: `%LINK-3-UPDOWN: Interface <*>, changed state to <*>`）に分類する。
+  （実装: `models/logpattern.py`、Loki クライアント: `sources/loki.py`）
 - テンプレートごとの出現件数をメトリクス化し、第 1 層（件数の急増）と第 4 層（特徴量）に入力する。
-- 過去に出現したことのない **新規テンプレート** の出現も予兆シグナルとして扱う。
+- 過去に出現したことのない **新規テンプレート** の出現も予兆シグナルとして扱う（`mark_known()` / `iter_new()` で管理）。
+- テンプレートの状態は JSON でアトミック永続化（`tempfile.mkstemp()` + `os.replace()`）。
 
 ### 5.6 フォールバック
 
@@ -227,13 +252,18 @@ groups:
 
 ---
 
-## 6. サービスヘルススコア
+## 6. サービスヘルススコア ✅ 実装済み
 
 ITSI の Service / KPI モデルに倣い、個々の機器の予兆を **サービス単位** にまとめる。
+（実装: `kizashi/health.py`、サービス定義サンプル: `examples/services.yaml`）
 
-- サービス定義（YAML）で「サービス → 構成機器・IF → 重み」を記述する（例: 拠点 A の WAN サービス = ルーター 2 台 + 回線 IF 4 本）。
-- ヘルススコア = 100 − Σ(重み × 正規化異常スコア)。冗長構成は「冗長系がすべて劣化したときだけ大きく減点」とする。
-- 将来のヘルススコア（1h 後）は、第 4 層の故障確率から期待値として算出する。
+- サービス定義 YAML（`validate_services_spec()` でスキーマ検証）で「サービス → 構成機器・IF → 重み・冗長グループ」を記述する。
+- ヘルススコア式: `score = 100 − Σ_groups(group_weight × effective_norm_score) / total_weight × 100`
+  - 冗長グループ（同じ `redundancy_group` を持つコンポーネント）: `effective_score = min(メンバースコア)` — 1 本でも正常なら減点なし。
+  - シングルトン: コンポーネント個別に計算。
+- 将来のヘルススコア（1h 後）は、第 4 層の `kizashi_failure_probability{horizon="1h"}` が存在する場合のみ出力。
+- 出力: `kizashi_health_score{service, horizon}` (horizon = "now" | "1h")
+- アラート: `ServiceHealthDegrading` (< 80, 10m), `ServiceHealthCritical` (< 50, 5m) を `rules/kizashi-alerts.yml` に定義。
 
 ---
 
@@ -397,44 +427,75 @@ services:
 
 | 用途 | 採用技術 | 理由 |
 |---|---|---|
-| 実装言語 | Python 3.12 | 機械学習ライブラリが揃っている |
+| 実装言語 | Python ≥ 3.11 | 機械学習ライブラリが揃っている |
 | 統計 / 予測 | statsmodels（STL, ETS）、scikit-learn（Theil-Sen, Isolation Forest） | 実績があり軽量 |
 | 教師あり学習 | LightGBM + SHAP | 表形式データで高精度、寄与度を算出できる |
 | 深層学習（任意） | PyTorch | 大規模環境向けオートエンコーダ |
 | ログ解析 | Drain3 | オンラインでテンプレート抽出が可能 |
 | メトリクス公開 | prometheus_client | 標準ライブラリ |
 | API | FastAPI | Feedback API、ヘルスチェック |
-| モデル管理 | MLflow | バージョン管理と評価指標の記録 |
-| データ | Parquet（pyarrow）on S3 / MinIO | 学習データの保存 |
+| モデル管理 | ファイルベース（必須）+ MLflow（`kizashi[mlflow]`、任意） | バージョン管理と評価指標の記録 |
+| データ | JSONL アペンドオンリー（必須）。Parquet / S3 は将来オプション | 障害ラベルの保存 |
 | デプロイ | Kubernetes + Helm | Prometheus Operator と同じ環境に載せられる |
 
 ---
 
-## 13. リポジトリ構成（P1 時点。未実装のモジュールは後続フェーズで追加）
+## 13. リポジトリ構成（P0〜P5 実装済み）
 
 ```
 KIZASHI/
 ├── kizashi/
-│   ├── config.py           # 設定ファイルの読み込み
-│   ├── sources/            # Prometheus / Loki / Alertmanager クライアント
-│   ├── features/           # 前処理、特徴量生成
+│   ├── config.py              # 設定ファイルの読み込み（PrometheusConfig, LokiConfig, FeedbackConfig 等）
+│   ├── cli.py                 # `kizashi` CLI（train / feedback / serve サブコマンド）
+│   ├── inference.py           # 推論ループ（1分周期）
+│   ├── trainer.py             # 学習ジョブ（train_baselines / train_failure_models）
+│   ├── exporter.py            # /metrics 公開（SnapshotCollector + FAMILIES 定義）
+│   ├── feedback.py            # Feedback API（FastAPI、Alertmanager webhook + オペレーター判定）
+│   ├── label_store.py         # 障害ラベルの JSONL アペンドオンリーストア
+│   ├── health.py              # サービスヘルススコア算出（P5）
+│   ├── explain.py             # SHAP による寄与度算出（P4）
+│   ├── llm.py                 # LLM による自然言語説明（Ollama、任意）
+│   ├── topology.py            # ネットワークトポロジ変更検知（TopologyStore）
+│   ├── sources/
+│   │   ├── prometheus.py      # Prometheus HTTP クライアント
+│   │   ├── loki.py            # Loki HTTP クライアント（LogQL）
+│   │   ├── alertmanager.py    # Alertmanager クライアント（silence 情報参照）
+│   │   └── jira.py            # Jira Service Management REST API v3 クライアント
 │   ├── models/
-│   │   ├── baseline.py     # 第1層: 適応しきい値
-│   │   ├── trend.py        # 第2層: トレンド予測・到達時間
-│   │   ├── multivariate.py # 第3層: 多変量異常検知
-│   │   ├── failure.py      # 第4層: 故障確率
-│   │   └── logpattern.py   # 補助層: ログパターン
-│   ├── health.py           # サービスヘルススコア
-│   ├── explain.py          # 寄与度の算出
-│   ├── inference.py        # 推論ループ
-│   ├── trainer.py          # 学習ジョブ
-│   ├── feedback.py         # Feedback API
-│   └── exporter.py         # /metrics 公開
-├── rules/                  # Prometheus recording / alerting rules
-├── dashboards/             # Grafana ダッシュボード JSON
-├── deploy/helm/
+│   │   ├── store.py           # ModelStore（アトミック読み書き、ホットリロード）
+│   │   ├── baseline.py        # 第1層: 季節性ベースライン + 動的バンド
+│   │   ├── trend.py           # 第2層: WLS トレンド予測・到達時間
+│   │   ├── multivariate.py    # 第3層: Isolation Forest 多変量異常検知
+│   │   ├── logpattern.py      # 補助層: Drain アルゴリズム ログパターン
+│   │   ├── failure.py         # 第4層: LightGBM 故障確率（PSI、ウォークフォワード検証）
+│   │   └── registry.py        # MLflow Model Registry 連携（NoOpRegistry でオプション化）
+├── examples/
+│   ├── kizashi.yaml           # 設定ファイルサンプル
+│   └── services.yaml          # サービス定義サンプル（P5）
+├── rules/
+│   ├── kizashi-features.yml   # Prometheus recording rules（特徴量前処理）
+│   ├── kizashi-alerts.yml     # アラートルール（predictive / health / self-monitor）
+│   ├── kizashi-topology.yml   # LLDP/CDP から topology_parent メトリクス生成
+│   └── snmp-normalization/    # ベンダー別 DOM 値正規化 recording rules（ADR-002）
+├── dashboards/
+│   ├── kizashi-predictive.json
+│   └── kizashi-health.json
+├── deploy/
+│   ├── helm/                  # Kubernetes Helm Chart
+│   └── alertmanager/
+│       └── routing.yml        # Alertmanager routing + inhibit_rules（ADR-004）
 ├── docs/
+│   ├── design.md              # 本ドキュメント
+│   └── decisions/             # アーキテクチャ決定記録（ADR）001〜005
 └── tests/
+    ├── test_baseline.py
+    ├── test_trend.py
+    ├── test_multivariate.py
+    ├── test_logpattern.py
+    ├── test_feedback.py
+    ├── test_failure.py
+    ├── test_explain.py
+    └── test_health.py
 ```
 
 ---
@@ -443,21 +504,25 @@ KIZASHI/
 
 | フェーズ | 期間目安 | 内容 | 完了条件 |
 |---|---|---|---|
-| **P0: 基盤** | 2 週 | recording rule、Inference の骨格、`/metrics` 公開、Grafana ダッシュボード | 対象メトリクスを取得して公開できる |
-| **P1: 統計層** | 3 週 | 第 1 層（適応しきい値）と第 2 層（到達時間）、アラートルール | 光パワー劣化を 72 時間前に検知できる |
-| **P2: 教師なし** | 4 週 | 第 3 層（多変量）、ログパターン、トポロジ集約 | 誤報 ≤ 0.1 件 / 機器 / 週 |
-| **P3: フィードバック** | 3 週 | Feedback API、障害ラベルの収集、Alertmanager 連携 | ラベルが継続的に蓄積される |
-| **P4: 教師あり** | 4 週 | 第 4 層（故障確率）、SHAP による説明、シャドーモード | §9.1 の昇格基準を満たす |
-| **P5: サービス** | 3 週 | サービスヘルススコア、将来ヘルス予測 | 主要サービスのヘルススコアを表示 |
+| **P0: 基盤** ✅ | 2 週 | recording rule、Inference の骨格、`/metrics` 公開、Grafana ダッシュボード | 対象メトリクスを取得して公開できる |
+| **P1: 統計層** ✅ | 3 週 | 第 1 層（適応しきい値）と第 2 層（到達時間）、アラートルール | 光パワー劣化を 72 時間前に検知できる |
+| **P2: 教師なし** ✅ | 4 週 | 第 3 層（多変量）、ログパターン、トポロジ集約 | 誤報 ≤ 0.1 件 / 機器 / 週 |
+| **P3: フィードバック** ✅ | 3 週 | Feedback API、障害ラベルの収集、Alertmanager 連携 | ラベルが継続的に蓄積される |
+| **P4: 教師あり** ✅ | 4 週 | 第 4 層（故障確率）、SHAP による説明、シャドーモード | §9.1 の昇格基準を満たす |
+| **P5: サービス** ✅ | 3 週 | サービスヘルススコア、将来ヘルス予測 | 主要サービスのヘルススコアを表示 |
 
-第 4 層は障害ラベルの蓄積が前提となるため、**P3 をなるべく早く始めてラベルを集め始めること** が全体の成否を左右する。
+**全 6 フェーズ実装完了（2026-10-15 時点）。**
 
 ---
 
-## 15. 未決事項
+## 15. 解決済み事項（旧: 未決事項）
 
-1. 長期ストレージは既存のものを使うか（Thanos / Mimir / VictoriaMetrics のどれか、保持期間はどれくらいか）
-2. 光モジュールの DOM 値をベンダーごとにどう正規化するか（MIB の差異）
-3. 障害チケットシステムとの連携方式（API の有無、原因分類の粒度）
-4. 予兆アラートの通知先と対応フロー（誰が、いつまでに、何をするか）
-5. LLM による予兆の自然言語説明・対処手順の提示をオプション機能として入れるか
+設計開始時の未決事項はすべて解決済み。詳細は `docs/decisions/` の各 ADR を参照。
+
+| # | 事項 | 決定内容 | ADR |
+|---|---|---|---|
+| 1 | 長期ストレージの選定 | **VictoriaMetrics**（13ヶ月保持） | `docs/decisions/001-long-term-storage.md` |
+| 2 | 光モジュール DOM 値の正規化 | snmp_exporter + Prometheus recording rules（`rules/snmp-normalization/`） | `docs/decisions/002-dom-normalization.md` |
+| 3 | 障害チケットシステム連携 | **Jira Service Management REST API v3**（`kizashi/sources/jira.py`） | `docs/decisions/003-jira-integration.md` |
+| 4 | 予兆アラートの通知先・対応フロー | Alertmanager routing + Slack/Jira/PagerDuty（`deploy/alertmanager/routing.yml`） | `docs/decisions/004-alert-routing.md` |
+| 5 | LLM による自然言語説明 | **Ollama**（オプション機能、`kizashi/llm.py`） | `docs/decisions/005-llm-explanation.md` |
