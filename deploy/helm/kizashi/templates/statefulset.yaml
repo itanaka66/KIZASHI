@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "kizashi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kizashi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: inference
+spec:
+  replicas: {{ .Values.inference.replicas }}
+  serviceName: {{ include "kizashi.fullname" . }}-headless
+  selector:
+    matchLabels:
+      {{- include "kizashi.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: inference
+  # No volumeClaimTemplates: all shards share a single RWX PVC.
+  template:
+    metadata:
+      labels:
+        {{- include "kizashi.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: inference
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: kizashi
+          image: {{ include "kizashi.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          # Extract the pod ordinal from the hostname (e.g. "kizashi-0" → "0")
+          # and use it as the shard index.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              export KIZASHI_SHARD_INDEX="${HOSTNAME##*-}"
+              export KIZASHI_SHARD_TOTAL="{{ .Values.inference.replicas }}"
+              exec kizashi serve --config /etc/kizashi/kizashi.yaml
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.config.server.port }}
+              protocol: TCP
+          env:
+            {{- include "kizashi.commonEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "kizashi.commonVolumeMounts" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            # Allow one full inference cycle to complete before declaring unhealthy.
+            initialDelaySeconds: 90
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.inference.resources | nindent 12 }}
+      volumes:
+        {{- include "kizashi.commonVolumes" . | nindent 8 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

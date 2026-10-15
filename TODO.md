@@ -105,9 +105,14 @@
 
 ## インフラ・運用
 
-- [ ] Kubernetes / Helm Chart の作成（`deploy/helm/`）
-- [ ] Grafana ダッシュボード JSON の作成（`dashboards/`）
-  - 予兆ダッシュボード（時系列 + 適応バンド + 異常スコア）
-  - サービスヘルススコアダッシュボード（P5 完了後）
-- [ ] メンテナンス期間の除外処理（Alertmanager silence 情報の参照）
-- [ ] ネットワーク構成変更検知 → 該当機器のベースライン自動再学習
+- [x] Kubernetes / Helm Chart の作成（`deploy/helm/`）
+- [x] Grafana ダッシュボード JSON の作成（`dashboards/`）
+  - [x] 予兆ダッシュボード（時系列 + 適応バンド + 異常スコア）— `dashboards/kizashi-predictive.json`
+  - [x] サービスヘルススコアダッシュボード — `dashboards/kizashi-health.json`（P5 完了後パネルが有効化）
+- [x] メンテナンス期間の除外処理（Alertmanager silence 情報の参照）
+  - `kizashi/sources/alertmanager.py` — AlertmanagerClient
+  - `kizashi/config.py` に `AlertmanagerConfig(url, silence_buffer)` 追加
+  - `kizashi/trainer.py` でサイレンス期間をマスクしてからベースライン学習
+- [x] ネットワーク構成変更検知 → 該当機器のベースライン自動再学習
+  - `kizashi/topology.py` — TopologyStore（シリーズキーの差分検知）
+  - `kizashi train` 実行時に自動チェック・更新（`--no-topology` で無効化可）

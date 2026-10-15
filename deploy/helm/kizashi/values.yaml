@@ -1,0 +1,152 @@
+image:
+  repository: kizashi
+  # Defaults to .Chart.AppVersion when empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# ---------------------------------------------------------------------------
+# Inference (kizashi serve) — StatefulSet so each pod gets a stable ordinal
+# that is used as the shard index.
+# ---------------------------------------------------------------------------
+inference:
+  # Number of shards (replicas). Each shard handles 1/N of all series.
+  replicas: 1
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: "2"
+      memory: 1Gi
+
+# ---------------------------------------------------------------------------
+# Training (kizashi train) — CronJob, runs once a day.
+# ---------------------------------------------------------------------------
+training:
+  schedule: "15 3 * * *"
+  # Keep the last N completed / failed job objects for debugging.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+# ---------------------------------------------------------------------------
+# Model storage — shared PVC mounted by both serve and train.
+# Use ReadWriteMany (NFS / EFS / Rook-CephFS) when running multiple shards.
+# Single-shard deployments can use ReadWriteOnce.
+# ---------------------------------------------------------------------------
+models:
+  persistence:
+    enabled: true
+    storageClass: ""    # leave empty to use the cluster default
+    accessMode: ReadWriteMany
+    size: 5Gi
+    # Bind to an existing PVC instead of creating one:
+    # existingClaim: my-pvc
+
+# ---------------------------------------------------------------------------
+# kizashi.yaml rendered into a ConfigMap. All durations use Prometheus syntax
+# (30s, 5m, 6h, 28d). targets[] is appended to the built-in example targets;
+# set targets to override them completely (set builtinTargets: false).
+# ---------------------------------------------------------------------------
+config:
+  prometheus:
+    url: http://prometheus:9090
+    # longTermUrl defaults to prometheus.url when empty.
+    longTermUrl: ""
+    timeout: 30s
+    # Name of a Secret key whose value is used as the bearer token file path.
+    # The secret must exist before installation; see templates/NOTES.txt.
+    bearerTokenSecretName: ""
+    bearerTokenSecretKey: token
+
+  server:
+    port: 9850
+
+  inference:
+    interval: 1m
+    window: 6h
+    step: 1m
+    forecastHorizons:
+      - 1h
+      - 24h
+    emitForecastMinScore: 3
+
+  training:
+    period: 28d
+    step: 5m
+
+  baseline:
+    bandSigma: 3
+
+  trend:
+    confidence: 0.9
+    maxPoints: 120
+    maxHorizon: 30d
+
+  # Alertmanager integration — silence periods are excluded from training data.
+  # Leave url empty to disable.
+  alertmanager:
+    url: ""                # e.g. http://alertmanager:9093
+    silenceBuffer: 30m     # extra margin excluded on each side of a silence window
+
+  # Set to false to omit the built-in example targets entirely.
+  builtinTargets: true
+
+  # Additional targets appended after the built-in ones.
+  targets: []
+  # Example:
+  # targets:
+  #   - metric: kizashi:optic_rx_dbm:avg5m
+  #     layers: [baseline, trend]
+  #     thresholds:
+  #       - name: rx_low
+  #         direction: below
+  #         by_label: transceiver_type
+  #         values:
+  #           10GBASE-LR: -14.4
+
+# ---------------------------------------------------------------------------
+# ServiceMonitor — requires the Prometheus Operator CRD.
+# ---------------------------------------------------------------------------
+serviceMonitor:
+  enabled: true
+  # Scrape interval. Should match inference.interval.
+  interval: 1m
+  # Deploy the ServiceMonitor in a different namespace (e.g. monitoring).
+  # Leave empty to use the release namespace.
+  namespace: ""
+  # Extra labels added to the ServiceMonitor (for Prometheus Operator label selectors).
+  labels: {}
+
+# ---------------------------------------------------------------------------
+# Pod settings
+# ---------------------------------------------------------------------------
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Extra environment variables injected into every container.
+extraEnv: []
+# Extra volumes added to every pod.
+extraVolumes: []
+# Extra volume mounts added to every container.
+extraVolumeMounts: []

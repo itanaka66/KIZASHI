@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kizashi.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kizashi.labels" . | nindent 4 }}
+data:
+  kizashi.yaml: |
+    prometheus:
+      url: {{ .Values.config.prometheus.url | quote }}
+      long_term_url: ${KIZASHI_LONG_TERM_URL:-{{ .Values.config.prometheus.url }}}
+      timeout: {{ .Values.config.prometheus.timeout }}
+    {{- if .Values.config.prometheus.bearerTokenSecretName }}
+      bearer_token_file: /var/run/secrets/kizashi/{{ .Values.config.prometheus.bearerTokenSecretKey }}
+    {{- end }}
+
+    server:
+      listen: 0.0.0.0:{{ .Values.config.server.port }}
+
+    models:
+      dir: /var/lib/kizashi/models
+
+    inference:
+      interval: {{ .Values.config.inference.interval }}
+      window: {{ .Values.config.inference.window }}
+      step: {{ .Values.config.inference.step }}
+      shard:
+        total: ${KIZASHI_SHARD_TOTAL:-1}
+        index: ${KIZASHI_SHARD_INDEX:-0}
+      forecast_horizons:
+    {{- range .Values.config.inference.forecastHorizons }}
+        - {{ . }}
+    {{- end }}
+      emit_forecast_min_score: {{ .Values.config.inference.emitForecastMinScore }}
+
+    training:
+      period: {{ .Values.config.training.period }}
+      step: {{ .Values.config.training.step }}
+
+    baseline:
+      band_sigma: {{ .Values.config.baseline.bandSigma }}
+
+    trend:
+      confidence: {{ .Values.config.trend.confidence }}
+      max_points: {{ .Values.config.trend.maxPoints }}
+      max_horizon: {{ .Values.config.trend.maxHorizon }}
+
+    {{- if .Values.config.alertmanager.url }}
+    alertmanager:
+      url: {{ .Values.config.alertmanager.url | quote }}
+      silence_buffer: {{ .Values.config.alertmanager.silenceBuffer }}
+    {{- end }}
+
+    targets:
+    {{- if .Values.config.builtinTargets }}
+      - metric: kizashi:optic_rx_dbm:avg5m
+        layers: [baseline, trend]
+        thresholds:
+          - name: rx_low
+            direction: below
+            by_label: transceiver_type
+            values:
+              10GBASE-LR: -14.4
+              10GBASE-SR: -9.9
+              100GBASE-LR4: -10.6
+      - metric: kizashi:if_in_errors:rate5m
+        layers: [baseline]
+      - metric: kizashi:if_util_in:ratio5m
+        layers: [baseline, trend]
+        thresholds:
+          - name: util_90pct
+            direction: above
+            value: 0.9
+      - metric: kizashi:if_flaps:changes1h
+        layers: [baseline]
+    {{- end }}
+    {{- with .Values.config.targets }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}

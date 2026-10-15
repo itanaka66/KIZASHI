@@ -1,0 +1,54 @@
+KIZASHI has been deployed.
+
+Inference (kizashi serve):
+  StatefulSet: {{ include "kizashi.fullname" . }}
+  Replicas (shards): {{ .Values.inference.replicas }}
+  Metrics endpoint: http://{{ include "kizashi.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.config.server.port }}/metrics
+
+Training (kizashi train):
+  CronJob: {{ include "kizashi.fullname" . }}-train
+  Schedule: {{ .Values.training.schedule }} (UTC)
+
+  To run training immediately:
+    kubectl create job --from=cronjob/{{ include "kizashi.fullname" . }}-train \
+      {{ include "kizashi.fullname" . }}-train-manual -n {{ .Release.Namespace }}
+
+Model storage:
+{{- if .Values.models.persistence.existingClaim }}
+  Using existing PVC: {{ .Values.models.persistence.existingClaim }}
+{{- else }}
+  PVC: {{ include "kizashi.fullname" . }}-models ({{ .Values.models.persistence.size }}, {{ .Values.models.persistence.accessMode }})
+{{- end }}
+
+{{- if .Values.config.prometheus.bearerTokenSecretName }}
+
+Bearer token:
+  The chart expects Secret "{{ .Values.config.prometheus.bearerTokenSecretName }}" in namespace
+  "{{ .Release.Namespace }}" with key "{{ .Values.config.prometheus.bearerTokenSecretKey }}".
+  Create it before installing:
+    kubectl create secret generic {{ .Values.config.prometheus.bearerTokenSecretName }} \
+      --from-literal={{ .Values.config.prometheus.bearerTokenSecretKey }}=<token> \
+      -n {{ .Release.Namespace }}
+{{- end }}
+
+{{- if .Values.serviceMonitor.enabled }}
+
+Prometheus Operator:
+  ServiceMonitor deployed. Ensure your Prometheus CR selects it with the
+  correct label selectors. Add the following to values.yaml if needed:
+    serviceMonitor:
+      labels:
+        release: prometheus   # match your Prometheus CR's serviceMonitorSelector
+{{- end }}
+
+Scaling (multiple shards):
+  helm upgrade {{ .Release.Name }} . --set inference.replicas=2
+  Each pod automatically uses its StatefulSet ordinal as KIZASHI_SHARD_INDEX.
+  Use ReadWriteMany storage when running more than one shard.
+
+Next steps:
+  1. Run kizashi train to fit initial baselines.
+  2. Add rule_files to prometheus.yml:
+       - rules/kizashi-recording.yml
+       - rules/kizashi-alerts.yml
+  3. Tune thresholds and alert for: durations in kizashi-alerts.yml.

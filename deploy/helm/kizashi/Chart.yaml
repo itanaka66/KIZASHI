@@ -1,0 +1,14 @@
+apiVersion: v2
+name: kizashi
+description: AI-based failure prediction for network monitoring on Prometheus
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - prometheus
+  - monitoring
+  - anomaly-detection
+  - network
+home: https://github.com/itanaka66/KIZASHI
+sources:
+  - https://github.com/itanaka66/KIZASHI

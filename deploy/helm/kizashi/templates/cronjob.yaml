@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "kizashi.fullname" . }}-train
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kizashi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trainer
+spec:
+  schedule: {{ .Values.training.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: {{ .Values.training.successfulJobsHistoryLimit }}
+  failedJobsHistoryLimit: {{ .Values.training.failedJobsHistoryLimit }}
+  jobTemplate:
+    spec:
+      # Retry once on transient failures (e.g. Prometheus briefly unavailable).
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            {{- include "kizashi.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: trainer
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: kizashi-train
+              image: {{ include "kizashi.image" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.containerSecurityContext | nindent 16 }}
+              command: ["kizashi", "train", "--config", "/etc/kizashi/kizashi.yaml"]
+              env:
+                {{- include "kizashi.commonEnv" . | nindent 16 }}
+              volumeMounts:
+                {{- include "kizashi.commonVolumeMounts" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.training.resources | nindent 16 }}
+          volumes:
+            {{- include "kizashi.commonVolumes" . | nindent 12 }}
+          {{- with .Values.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

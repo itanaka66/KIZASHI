@@ -14,7 +14,9 @@ from kizashi.config import ConfigError, load_config
 from kizashi.exporter import SnapshotCollector
 from kizashi.inference import InferenceEngine
 from kizashi.models.store import ModelStore
+from kizashi.sources.alertmanager import AlertmanagerClient, AlertmanagerError
 from kizashi.sources.prometheus import PrometheusClient, PrometheusError
+from kizashi.topology import TopologyStore
 from kizashi.trainer import train
 
 log = logging.getLogger("kizashi")
@@ -50,8 +52,24 @@ def _train(args) -> int:
     client = PrometheusClient(
         config.prometheus.long_term_url, config.prometheus.timeout, config.prometheus.bearer_token_file
     )
+    store = ModelStore(config.model_dir)
+    topology = TopologyStore(config.model_dir) if not args.no_topology else None
+
+    # Fetch silences from Alertmanager when configured.
+    silences = None
+    if config.alertmanager:
+        am_client = AlertmanagerClient(config.alertmanager.url)
+        try:
+            silences = am_client.active_silences()
+            if silences:
+                log.info("excluding %d active silence(s) from training data", len(silences))
+        except AlertmanagerError as e:
+            log.warning("could not fetch silences from Alertmanager (%s); proceeding without exclusion", e)
+        finally:
+            am_client.close()
+
     try:
-        fitted = train(config, client, ModelStore(config.model_dir))
+        fitted = train(config, client, store, silences=silences, topology=topology)
     finally:
         client.close()
     for metric, n in fitted.items():
@@ -71,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
 
     tr = sub.add_parser("train", help="train models from long-term storage")
     tr.add_argument("--config", "-c", default="kizashi.yaml")
+    tr.add_argument(
+        "--no-topology",
+        action="store_true",
+        help="skip topology change detection and store update",
+    )
     tr.set_defaults(func=_train)
 
     args = parser.parse_args(argv)

@@ -6,6 +6,13 @@ prometheus:
   timeout: 30s
   # bearer_token_file: /var/run/secrets/prometheus-token
 
+# Alertmanager — optional. When set, active silences are fetched at training time
+# and the corresponding time windows (plus silence_buffer on each side) are excluded
+# from the baseline fit, so past incidents do not distort the seasonal profile.
+# alertmanager:
+#   url: http://alertmanager:9093
+#   silence_buffer: 30m
+
 server:
   listen: 0.0.0.0:9850
 
