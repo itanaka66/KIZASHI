@@ -1,0 +1,44 @@
+groups:
+  - name: kizashi-dom-cisco-ios
+    interval: 1m
+    rules:
+      # Rx power (dBm): sensorType=15, precision=1 → divide by 10
+      # entPhySensorDescr must contain "Rx" (filtered via metric_relabel_configs in Prometheus job)
+      - record: kizashi:optic_rx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-cisco-ios", entPhySensorType="15", sensor_direction="rx"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-ios
+
+      # Tx power (dBm)
+      - record: kizashi:optic_tx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-cisco-ios", entPhySensorType="15", sensor_direction="tx"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-ios
+
+      # Temperature (°C): sensorType=8 (celsius), precision=1
+      - record: kizashi:optic_temp_celsius:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-cisco-ios", entPhySensorType="8"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-ios
+
+      # Laser bias current (mA): sensorType=11 (amperes), precision=3 → /1000 → *1000 = /1
+      - record: kizashi:optic_bias_ma:avg5m
+        expr: |
+          avg_over_time(
+            entPhySensorValue{job="snmp-cisco-ios", entPhySensorType="11"}
+            [5m]
+          )
+        labels:
+          vendor: cisco-ios

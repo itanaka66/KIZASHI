@@ -95,11 +95,11 @@
 
 実装を始める前に決定が必要な事項。
 
-- [ ] 長期ストレージの選定（Thanos / Mimir / VictoriaMetrics のどれか、保持期間）
-- [ ] 光モジュール DOM 値のベンダーごとの正規化方法（MIB の差異の吸収方法）
-- [ ] 障害チケットシステム（ServiceNow / Redmine 等）との連携方式（API の有無、原因分類の粒度）
-- [ ] 予兆アラートの通知先と対応フロー（誰が・いつまでに・何をするか）
-- [ ] LLM による予兆の自然言語説明・対処手順提示をオプション機能として入れるか
+- [x] 長期ストレージの選定 → **VictoriaMetrics**（13ヶ月保持） `docs/decisions/001-long-term-storage.md`
+- [x] 光モジュール DOM 値のベンダーごとの正規化方法 → snmp_exporter + Prometheus recording rules `docs/decisions/002-dom-normalization.md` / `rules/snmp-normalization/`
+- [x] 障害チケットシステムとの連携方式 → **Jira Service Management REST API v3** `docs/decisions/003-jira-integration.md` / `kizashi/sources/jira.py`
+- [x] 予兆アラートの通知先と対応フロー → Alertmanager routing + Slack/Jira/PagerDuty `docs/decisions/004-alert-routing.md` / `deploy/alertmanager/routing.yml`
+- [x] LLM による予兆の自然言語説明 → **Ollama**（オプション機能） `docs/decisions/005-llm-explanation.md` / `kizashi/llm.py`
 
 ---
 

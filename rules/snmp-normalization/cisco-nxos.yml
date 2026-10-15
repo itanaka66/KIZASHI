@@ -1,0 +1,42 @@
+groups:
+  - name: kizashi-dom-cisco-nxos
+    interval: 1m
+    rules:
+      # NX-OS uses CISCO-ENTITY-SENSOR-MIB (OID .1.3.6.1.4.1.9.9.91)
+      # Structure is identical to ENTITY-SENSOR-MIB; precision is typically 1 (÷10)
+
+      - record: kizashi:optic_rx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entSensorValue{job="snmp-cisco-nxos", entSensorType="14", sensor_direction="rx"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-nxos
+
+      - record: kizashi:optic_tx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entSensorValue{job="snmp-cisco-nxos", entSensorType="14", sensor_direction="tx"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-nxos
+
+      - record: kizashi:optic_temp_celsius:avg5m
+        expr: |
+          avg_over_time(
+            (entSensorValue{job="snmp-cisco-nxos", entSensorType="8"} / 10)
+            [5m]
+          )
+        labels:
+          vendor: cisco-nxos
+
+      - record: kizashi:optic_bias_ma:avg5m
+        expr: |
+          avg_over_time(
+            entSensorValue{job="snmp-cisco-nxos", entSensorType="11"}
+            [5m]
+          )
+        labels:
+          vendor: cisco-nxos
