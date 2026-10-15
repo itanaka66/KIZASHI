@@ -1,0 +1,40 @@
+{{/* ClusterIP service — Prometheus scrapes this to pull /metrics from all shards. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kizashi.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kizashi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: inference
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kizashi.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: inference
+  ports:
+    - name: metrics
+      port: {{ .Values.config.server.port }}
+      targetPort: metrics
+      protocol: TCP
+---
+{{/* Headless service required by the StatefulSet for stable pod DNS names. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kizashi.fullname" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "kizashi.labels" . | nindent 4 }}
+    app.kubernetes.io/component: inference
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    {{- include "kizashi.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: inference
+  ports:
+    - name: metrics
+      port: {{ .Values.config.server.port }}
+      targetPort: metrics
+      protocol: TCP

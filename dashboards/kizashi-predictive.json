@@ -1,0 +1,529 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "datasource",
+      "id": "prometheus",
+      "name": "Prometheus",
+      "version": "1.0.0"
+    }
+  ],
+  "description": "KIZASHI predictive failure detection — adaptive thresholds, anomaly scores, and trend forecasts",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "refresh": "1m",
+  "schemaVersion": 36,
+  "tags": ["kizashi", "network", "predictive"],
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "KIZASHI — Predictive Failure Detection",
+  "uid": "kizashi-predictive",
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource",
+        "label": "Datasource"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(kizashi_anomaly_score, instance)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Instance",
+        "multi": false,
+        "name": "instance",
+        "query": { "query": "label_values(kizashi_anomaly_score, instance)", "refId": "V" },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(kizashi_anomaly_score{instance=\"$instance\"}, ifName)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Interface",
+        "multi": false,
+        "name": "ifName",
+        "query": { "query": "label_values(kizashi_anomaly_score{instance=\"$instance\"}, ifName)", "refId": "V" },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": {},
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "definition": "label_values(kizashi_anomaly_score{instance=\"$instance\"}, metric)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Metric",
+        "multi": false,
+        "name": "metric",
+        "query": { "query": "label_values(kizashi_anomaly_score{instance=\"$instance\"}, metric)", "refId": "V" },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 10,
+      "title": "Adaptive Band",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Actual metric value overlaid with the learned seasonal expected value and ±3σ adaptive band. A value outside the band yields an anomaly score above 3.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Upper band" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } },
+              { "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 },
+              { "id": "custom.fillBelowTo", "value": "Lower band" },
+              { "id": "custom.fillOpacity", "value": 15 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Lower band" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } },
+              { "id": "custom.lineStyle", "value": { "dash": [6, 4], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Expected" },
+            "properties": [
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-blue" } },
+              { "id": "custom.lineStyle", "value": { "dash": [3, 3], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "$metric{instance=\"$instance\", ifName=~\"$ifName\"}",
+          "legendFormat": "Actual ({{ifName}})",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_expected_value{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\"}",
+          "legendFormat": "Expected",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_band_upper{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\"}",
+          "legendFormat": "Upper band",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_band_lower{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\"}",
+          "legendFormat": "Lower band",
+          "refId": "D"
+        }
+      ],
+      "title": "Actual vs Adaptive Band — $instance / $ifName",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "id": 11,
+      "title": "Anomaly Score & Time to Threshold",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Robust z-score: |actual − expected| / (1.4826 × MAD). Values ≥ 3 indicate an anomaly; ≥ 6 triggers the MetricAnomalous alert.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 6 }
+            ]
+          },
+          "unit": "short",
+          "min": 0
+        }
+      },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 11 },
+      "id": 2,
+      "options": {
+        "legend": { "calcs": ["last", "max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_anomaly_score{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\", layer=\"baseline\"}",
+          "legendFormat": "Score ({{ifName}})",
+          "refId": "A"
+        }
+      ],
+      "title": "Anomaly Score — $instance / $ifName",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Estimated time until the trend crosses the configured limit. Only shown when the full confidence interval points toward the threshold.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 24 },
+              { "color": "yellow", "value": 48 },
+              { "color": "green",  "value": 72 }
+            ]
+          },
+          "unit": "h",
+          "noValue": "—"
+        }
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 11 },
+      "id": 3,
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "background"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_time_to_threshold_seconds{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\"} / 3600",
+          "legendFormat": "{{ifName}} / {{threshold}}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Time to Threshold (hours)",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 },
+      "id": 12,
+      "title": "Forecast",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "24-hour-ahead forecast with 10–90% confidence band. Published only for series that are anomalous or heading toward a threshold.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "p90" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [5, 5], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 },
+              { "id": "custom.fillBelowTo", "value": "p10" },
+              { "id": "custom.fillOpacity", "value": 15 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "p10" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [5, 5], "fill": "dash" } },
+              { "id": "custom.lineWidth", "value": 1 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 20 },
+      "id": 4,
+      "options": {
+        "legend": { "calcs": ["last"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_forecast_value{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\", horizon=\"24h\", quantile=\"0.5\"}",
+          "legendFormat": "Forecast p50 ({{ifName}})",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_forecast_value{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\", horizon=\"24h\", quantile=\"0.9\"}",
+          "legendFormat": "p90",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "expr": "kizashi_forecast_value{metric=\"$metric\", instance=\"$instance\", ifName=~\"$ifName\", horizon=\"24h\", quantile=\"0.1\"}",
+          "legendFormat": "p10",
+          "refId": "C"
+        }
+      ],
+      "title": "24h Forecast — $instance / $ifName",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 },
+      "id": 13,
+      "title": "Network-wide: Top Anomalous Interfaces",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Interfaces with the highest current anomaly score across all devices. Sort by Score descending.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "width": 0 },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green",  "value": null },
+                  { "color": "yellow", "value": 3 },
+                  { "color": "red",    "value": 6 }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Score" },
+                "properties": [
+                  { "id": "custom.displayMode", "value": "color-background" },
+                  { "id": "custom.width", "value": 120 }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "ETA (h)" },
+                "properties": [
+                  { "id": "unit", "value": "h" },
+                  { "id": "custom.width", "value": 100 }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 10, "w": 24, "x": 0, "y": 29 },
+          "id": 5,
+          "options": {
+            "sortBy": [{ "displayName": "Score", "desc": true }],
+            "footer": { "show": false }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "topk(30, kizashi_anomaly_score{layer=\"baseline\"})",
+              "instant": true,
+              "legendFormat": "",
+              "refId": "A",
+              "format": "table"
+            },
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "kizashi_time_to_threshold_seconds / 3600",
+              "instant": true,
+              "legendFormat": "",
+              "refId": "B",
+              "format": "table"
+            }
+          ],
+          "transformations": [
+            { "id": "merge", "options": {} },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "instance": "Instance",
+                  "ifName": "Interface",
+                  "metric": "Metric",
+                  "Value #A": "Score",
+                  "Value #B": "ETA (h)"
+                },
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "layer": true,
+                  "job": true
+                }
+              }
+            }
+          ],
+          "title": "Top 30 Anomalous Interfaces",
+          "type": "table"
+        }
+      ]
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "id": 14,
+      "title": "KIZASHI Self-monitoring",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Time spent on one inference cycle per target. Should stay well below inference.interval (default 60s).",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "lineWidth": 1, "fillOpacity": 5, "showPoints": "never" },
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green",  "value": null },
+                  { "color": "yellow", "value": 45 },
+                  { "color": "red",    "value": 60 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+          "id": 6,
+          "options": {
+            "legend": { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "histogram_quantile(0.99, rate(kizashi_inference_duration_seconds_bucket[5m]))",
+              "legendFormat": "p99 {{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Inference Duration p99",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Failed Prometheus queries per target over time.",
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "red" },
+              "custom": { "lineWidth": 1, "fillOpacity": 20, "showPoints": "never" },
+              "unit": "short"
+            }
+          },
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
+          "id": 7,
+          "options": {
+            "legend": { "calcs": ["sum"], "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "increase(kizashi_query_errors_total[5m])",
+              "legendFormat": "{{target}}",
+              "refId": "A"
+            }
+          ],
+          "title": "Query Errors (5m)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "description": "Time since the last completed inference cycle. Goes red when KIZASHI has stalled.",
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green",  "value": null },
+                  { "color": "yellow", "value": 120 },
+                  { "color": "red",    "value": 600 }
+                ]
+              },
+              "color": { "mode": "thresholds" },
+              "noValue": "unknown"
+            }
+          },
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
+          "id": 8,
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "background"
+          },
+          "targets": [
+            {
+              "datasource": { "type": "prometheus", "uid": "${datasource}" },
+              "expr": "time() - kizashi_last_inference_timestamp_seconds",
+              "legendFormat": "Age",
+              "instant": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Last Cycle Age",
+          "type": "stat"
+        }
+      ]
+    }
+  ]
+}

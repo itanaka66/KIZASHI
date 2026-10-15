@@ -129,6 +129,13 @@ class TargetConfig:
 
 
 @dataclass
+class AlertmanagerConfig:
+    url: str
+    # Seconds excluded on each side of a silence window during training.
+    silence_buffer: float = 1800.0
+
+
+@dataclass
 class Config:
     prometheus: PrometheusConfig
     targets: list[TargetConfig]
@@ -139,6 +146,7 @@ class Config:
     training: TrainingConfig = field(default_factory=TrainingConfig)
     baseline: BaselineConfig = field(default_factory=BaselineConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
+    alertmanager: AlertmanagerConfig | None = None
 
 
 def _threshold(raw: dict) -> Threshold:
@@ -228,6 +236,16 @@ def parse_config(raw: dict) -> Config:
     server = raw.get("server") or {}
     host, _, port = str(server.get("listen", "0.0.0.0:9850")).rpartition(":")
 
+    am_raw = raw.get("alertmanager") or {}
+    alertmanager = (
+        AlertmanagerConfig(
+            url=am_raw["url"].rstrip("/"),
+            silence_buffer=parse_duration(am_raw.get("silence_buffer", "30m")),
+        )
+        if am_raw.get("url")
+        else None
+    )
+
     return Config(
         prometheus=PrometheusConfig(
             url=prom["url"].rstrip("/"),
@@ -248,4 +266,5 @@ def parse_config(raw: dict) -> Config:
             max_horizon=parse_duration(td.get("max_horizon", trend_defaults.max_horizon)),
             min_points=int(td.get("min_points", trend_defaults.min_points)),
         ),
+        alertmanager=alertmanager,
     )
