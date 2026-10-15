@@ -1,8 +1,8 @@
 # KIZASHI configuration example. ${VAR} and ${VAR:-default} are expanded from the environment.
 prometheus:
   url: http://prometheus:9090
-  # Training reads weeks of history; point this at Thanos / Mimir if Prometheus retention is short.
-  long_term_url: ${KIZASHI_LONG_TERM_URL:-http://prometheus:9090}
+  # Training uses VictoriaMetrics for long-term history (13-month retention).
+  long_term_url: ${KIZASHI_LONG_TERM_URL:-http://victoriametrics:8428}
   timeout: 30s
   # bearer_token_file: /var/run/secrets/prometheus-token
 
@@ -12,6 +12,27 @@ prometheus:
 # alertmanager:
 #   url: http://alertmanager:9093
 #   silence_buffer: 30m
+
+# Jira Service Management — optional. When set, KIZASHI creates Jira issues
+# when predictive alerts fire, with deduplication by instance+interface+failure_mode.
+# Requires environment variable JIRA_API_TOKEN (or the name set in api_token_env).
+# jira:
+#   url: https://your-org.atlassian.net
+#   email: kizashi-bot@your-org.com
+#   api_token_env: JIRA_API_TOKEN
+#   project_key: NWOPS
+#   issue_type: Incident
+
+# LLM — optional. When set, KIZASHI generates a Japanese natural-language explanation
+# for each predictive alert using a local Ollama server.
+# Recommended models:
+#   GPU (VRAM >= 16GB): qwen2.5:14b
+#   CPU / GPU (VRAM 8GB): qwen2.5:7b
+#   Low-memory:          qwen2.5:3b  or  llama3.2:3b
+# llm:
+#   url: http://ollama:11434
+#   model: qwen2.5:7b
+#   timeout: 30s
 
 server:
   listen: 0.0.0.0:9850

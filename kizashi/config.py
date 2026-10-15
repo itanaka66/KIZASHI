@@ -136,6 +136,24 @@ class AlertmanagerConfig:
 
 
 @dataclass
+class JiraConfig:
+    url: str
+    email: str
+    api_token_env: str  # name of the environment variable holding the API token
+    project_key: str
+    issue_type: str = "Incident"
+    dedup_label: str = "kizashi-alert-id"
+
+
+@dataclass
+class LLMConfig:
+    url: str
+    model: str = "qwen2.5:7b"
+    timeout: float = 30.0
+    max_tokens: int = 512
+
+
+@dataclass
 class Config:
     prometheus: PrometheusConfig
     targets: list[TargetConfig]
@@ -147,6 +165,8 @@ class Config:
     baseline: BaselineConfig = field(default_factory=BaselineConfig)
     trend: TrendConfig = field(default_factory=TrendConfig)
     alertmanager: AlertmanagerConfig | None = None
+    jira: JiraConfig | None = None
+    llm: LLMConfig | None = None
 
 
 def _threshold(raw: dict) -> Threshold:
@@ -246,6 +266,32 @@ def parse_config(raw: dict) -> Config:
         else None
     )
 
+    jira_raw = raw.get("jira") or {}
+    jira = (
+        JiraConfig(
+            url=jira_raw["url"].rstrip("/"),
+            email=jira_raw["email"],
+            api_token_env=jira_raw.get("api_token_env", "JIRA_API_TOKEN"),
+            project_key=jira_raw["project_key"],
+            issue_type=jira_raw.get("issue_type", "Incident"),
+            dedup_label=jira_raw.get("dedup_label", "kizashi-alert-id"),
+        )
+        if jira_raw.get("url") and jira_raw.get("email") and jira_raw.get("project_key")
+        else None
+    )
+
+    llm_raw = raw.get("llm") or {}
+    llm = (
+        LLMConfig(
+            url=llm_raw["url"].rstrip("/"),
+            model=llm_raw.get("model", "qwen2.5:7b"),
+            timeout=parse_duration(llm_raw.get("timeout", "30s")),
+            max_tokens=int(llm_raw.get("max_tokens", 512)),
+        )
+        if llm_raw.get("url")
+        else None
+    )
+
     return Config(
         prometheus=PrometheusConfig(
             url=prom["url"].rstrip("/"),
@@ -267,4 +313,6 @@ def parse_config(raw: dict) -> Config:
             min_points=int(td.get("min_points", trend_defaults.min_points)),
         ),
         alertmanager=alertmanager,
+        jira=jira,
+        llm=llm,
     )

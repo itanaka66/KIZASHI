@@ -1,0 +1,41 @@
+groups:
+  - name: kizashi-dom-juniper
+    interval: 1m
+    rules:
+      # JUNIPER-DOM-MIB values are in 0.001 dBm / 0.001°C / 0.001 mA units → divide by 1000
+
+      - record: kizashi:optic_rx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (jnxDomCurrentRxLaserPower{job="snmp-juniper"} / 1000)
+            [5m]
+          )
+        labels:
+          vendor: juniper
+
+      - record: kizashi:optic_tx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (jnxDomCurrentTxLaserOutputPower{job="snmp-juniper"} / 1000)
+            [5m]
+          )
+        labels:
+          vendor: juniper
+
+      - record: kizashi:optic_temp_celsius:avg5m
+        expr: |
+          avg_over_time(
+            (jnxDomCurrentModuleTemperature{job="snmp-juniper"} / 1000)
+            [5m]
+          )
+        labels:
+          vendor: juniper
+
+      - record: kizashi:optic_bias_ma:avg5m
+        expr: |
+          avg_over_time(
+            (jnxDomCurrentTxLaserBiasCurrent{job="snmp-juniper"} / 1000)
+            [5m]
+          )
+        labels:
+          vendor: juniper

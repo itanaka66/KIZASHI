@@ -1,0 +1,130 @@
+# Alertmanager routing configuration for KIZASHI predictive alerts.
+# Merge this into your existing alertmanager.yml route tree under the root route,
+# or include it via --config.file if you keep KIZASHI routes separate.
+
+route:
+  # Default receiver for non-KIZASHI alerts (set to your existing receiver).
+  receiver: default
+  group_by: [alertname, instance]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+  routes:
+    # ── KIZASHI predictive alerts ──────────────────────────────────────────
+    - matchers:
+        - kizashi = "predictive"
+      receiver: kizashi-warning
+      group_by: [alertname, instance, ifName, failure_mode]
+      group_wait: 1m
+      group_interval: 10m
+      repeat_interval: 12h
+      continue: false
+
+      routes:
+        # Critical: threshold < 24h → Slack oncall + Jira + PagerDuty
+        - matchers:
+            - severity = "critical"
+          receiver: kizashi-critical
+          repeat_interval: 2h
+          continue: false
+
+        # Warning with email: 24h–72h
+        - matchers:
+            - severity = "warning"
+            - time_to_threshold_h =~ "^([0-9]|[12][0-9]|3[01])$"
+          receiver: kizashi-warning-urgent
+          repeat_interval: 4h
+          continue: false
+
+    # ── Anomaly-only alerts (score > 6, no threshold) ──────────────────────
+    - matchers:
+        - kizashi = "predictive"
+        - alertname = "KIZASHIAnomalyHigh"
+      receiver: kizashi-info
+      group_by: [alertname, instance]
+      repeat_interval: 24h
+
+# ── Inhibition rules ──────────────────────────────────────────────────────
+# Suppress downstream predictive alerts when the upstream device has a critical alert.
+inhibit_rules:
+  - source_matchers:
+      - kizashi = "predictive"
+      - severity = "critical"
+    target_matchers:
+      - kizashi = "predictive"
+      - severity = "warning"
+    equal: [topology_parent]
+
+  # Suppress KIZASHI predictive alerts during confirmed outages (non-predictive critical).
+  - source_matchers:
+      - severity = "critical"
+      - kizashi != "predictive"
+    target_matchers:
+      - kizashi = "predictive"
+    equal: [instance]
+
+# ── Receivers ─────────────────────────────────────────────────────────────
+# Replace placeholder URLs / channel names with your actual values.
+receivers:
+  - name: default
+    # Your existing default receiver goes here.
+
+  - name: kizashi-critical
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: "#network-oncall"
+        title: ":rotating_light: [KIZASHI CRITICAL] {{ .GroupLabels.instance }} / {{ .GroupLabels.ifName }}"
+        text: |
+          *故障モード*: {{ .GroupLabels.failure_mode }}
+          *しきい値到達*: {{ .CommonAnnotations.time_to_threshold_h }}h 以内
+          *異常スコア*: {{ .CommonAnnotations.anomaly_score }}
+          {{ if .CommonAnnotations.llm_explanation }}*AI 説明*: {{ .CommonAnnotations.llm_explanation }}{{ end }}
+          <{{ .CommonAnnotations.grafana_url }}|Grafana で確認>
+    pagerduty_configs:
+      - routing_key: ${PAGERDUTY_ROUTING_KEY}
+        description: "[KIZASHI] {{ .GroupLabels.instance }}/{{ .GroupLabels.ifName }}: {{ .GroupLabels.failure_mode }}"
+        severity: critical
+    webhook_configs:
+      - url: http://kizashi:9850/api/v1/webhook/alertmanager
+        send_resolved: true
+
+  - name: kizashi-warning-urgent
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: "#network-ops"
+        title: ":warning: [KIZASHI WARNING] {{ .GroupLabels.instance }} / {{ .GroupLabels.ifName }}"
+        text: |
+          *故障モード*: {{ .GroupLabels.failure_mode }}
+          *しきい値到達*: {{ .CommonAnnotations.time_to_threshold_h }}h 以内
+          <{{ .CommonAnnotations.grafana_url }}|Grafana で確認>
+    email_configs:
+      - to: ${NETWORK_OPS_EMAIL}
+        from: kizashi-alert@your-org.com
+        smarthost: ${SMTP_HOST}
+        subject: "[KIZASHI] {{ .GroupLabels.instance }}: {{ .GroupLabels.failure_mode }} 予兆"
+    webhook_configs:
+      - url: http://kizashi:9850/api/v1/webhook/alertmanager
+        send_resolved: true
+
+  - name: kizashi-warning
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: "#network-ops"
+        title: ":bell: [KIZASHI] {{ .GroupLabels.instance }} / {{ .GroupLabels.ifName }}"
+        text: |
+          *故障モード*: {{ .GroupLabels.failure_mode }}
+          *しきい値到達*: {{ .CommonAnnotations.time_to_threshold_h }}h 以内
+          <{{ .CommonAnnotations.grafana_url }}|Grafana で確認>
+    webhook_configs:
+      - url: http://kizashi:9850/api/v1/webhook/alertmanager
+        send_resolved: true
+
+  - name: kizashi-info
+    slack_configs:
+      - api_url: ${SLACK_WEBHOOK_URL}
+        channel: "#network-monitoring"
+        title: ":mag: [KIZASHI] 異常スコア上昇 {{ .GroupLabels.instance }}"
+        text: |
+          *異常スコア*: {{ .CommonAnnotations.anomaly_score }}
+          <{{ .CommonAnnotations.grafana_url }}|Grafana で確認>

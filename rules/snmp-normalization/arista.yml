@@ -1,0 +1,41 @@
+groups:
+  - name: kizashi-dom-arista
+    interval: 1m
+    rules:
+      # Arista uses standard ENTITY-SENSOR-MIB with entPhySensorPrecision=4 → divide by 10000
+
+      - record: kizashi:optic_rx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-arista", entPhySensorType="15", sensor_direction="rx"} / 10000)
+            [5m]
+          )
+        labels:
+          vendor: arista
+
+      - record: kizashi:optic_tx_dbm:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-arista", entPhySensorType="15", sensor_direction="tx"} / 10000)
+            [5m]
+          )
+        labels:
+          vendor: arista
+
+      - record: kizashi:optic_temp_celsius:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-arista", entPhySensorType="8"} / 10000)
+            [5m]
+          )
+        labels:
+          vendor: arista
+
+      - record: kizashi:optic_bias_ma:avg5m
+        expr: |
+          avg_over_time(
+            (entPhySensorValue{job="snmp-arista", entPhySensorType="11"} / 10000 * 1000)
+            [5m]
+          )
+        labels:
+          vendor: arista
