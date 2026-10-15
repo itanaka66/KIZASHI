@@ -35,6 +35,25 @@ groups:
             {{ $labels.instance }} {{ $labels.ifName }}: {{ $labels.metric }} deviates from
             its usual pattern (score {{ $value | printf "%.1f" }})
 
+      # Topology-aware variant: carries parent_instance so Alertmanager can
+      # suppress child alerts when the parent fires. Requires kizashi_topology_parent
+      # to be populated (see rules/kizashi-topology.yml).
+      - alert: OpticDegradationPredictedWithTopology
+        expr: |
+          kizashi_time_to_threshold_seconds{metric=~"kizashi:optic_.*"} < 72 * 3600
+          * on(instance) group_left(parent_instance)
+          max by (instance, parent_instance) (kizashi_topology_parent)
+        for: 30m
+        labels:
+          severity: warning
+          kizashi: predictive
+          topology_aware: "true"
+        annotations:
+          summary: >-
+            {{ $labels.instance }} {{ $labels.ifName }}: optical power expected to reach
+            {{ $labels.threshold }} in about {{ $value | humanizeDuration }}
+          description: Parent device {{ $labels.parent_instance }}
+
   - name: kizashi-self
     rules:
       - alert: KizashiInferenceStalled

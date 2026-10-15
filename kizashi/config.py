@@ -136,6 +136,27 @@ class AlertmanagerConfig:
 
 
 @dataclass
+class FeatureMetricConfig:
+    name: str       # feature display name used in model metadata
+    metric: str     # PromQL expression (may include label matchers)
+    aggregation: str = "last"   # "last" | "mean" | "max" | "sum" over training window
+
+
+@dataclass
+class MultivariateConfig:
+    features: list[FeatureMetricConfig]
+    contamination: float = 0.05
+    min_group_samples: int = 10
+
+
+@dataclass
+class LokiConfig:
+    url: str
+    timeout: float = 30.0
+    bearer_token_file: str | None = None
+
+
+@dataclass
 class JiraConfig:
     url: str
     email: str
@@ -167,6 +188,8 @@ class Config:
     alertmanager: AlertmanagerConfig | None = None
     jira: JiraConfig | None = None
     llm: LLMConfig | None = None
+    multivariate: MultivariateConfig | None = None
+    loki: LokiConfig | None = None
 
 
 def _threshold(raw: dict) -> Threshold:
@@ -292,6 +315,36 @@ def parse_config(raw: dict) -> Config:
         else None
     )
 
+    mv_raw = raw.get("multivariate") or {}
+    mv_features_raw = mv_raw.get("features") or []
+    multivariate = (
+        MultivariateConfig(
+            features=[
+                FeatureMetricConfig(
+                    name=f["name"],
+                    metric=f["metric"],
+                    aggregation=f.get("aggregation", "last"),
+                )
+                for f in mv_features_raw
+            ],
+            contamination=float(mv_raw.get("contamination", 0.05)),
+            min_group_samples=int(mv_raw.get("min_group_samples", 10)),
+        )
+        if mv_features_raw
+        else None
+    )
+
+    loki_raw = raw.get("loki") or {}
+    loki = (
+        LokiConfig(
+            url=loki_raw["url"].rstrip("/"),
+            timeout=parse_duration(loki_raw.get("timeout", "30s")),
+            bearer_token_file=loki_raw.get("bearer_token_file"),
+        )
+        if loki_raw.get("url")
+        else None
+    )
+
     return Config(
         prometheus=PrometheusConfig(
             url=prom["url"].rstrip("/"),
@@ -315,4 +368,6 @@ def parse_config(raw: dict) -> Config:
         alertmanager=alertmanager,
         jira=jira,
         llm=llm,
+        multivariate=multivariate,
+        loki=loki,
     )

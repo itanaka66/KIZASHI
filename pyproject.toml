@@ -17,7 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+# P2: multivariate anomaly detection
+multivariate = ["scikit-learn>=1.4"]
+# P2: log pattern anomaly detection via Loki (no extra Python deps)
+loki = []
+dev = ["pytest>=8", "scikit-learn>=1.4"]
 
 [project.scripts]
 kizashi = "kizashi.cli:main"

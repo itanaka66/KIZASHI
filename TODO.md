@@ -9,20 +9,20 @@
 
 設計書 §5.3、§5.5 参照。
 
-- [ ] `kizashi/models/multivariate.py` — 第3層: Isolation Forest による多変量異常検知
-  - 機器の役割（コア/ディストリビューション/アクセス）× ベンダー機種ごとにグループ共有モデルを学習
-  - 入力: 機器単位の特徴量ベクトル（CPU、メモリ、温度、全 IF のエラー率合計、ネイバー遷移数など）
-  - 出力: `kizashi_anomaly_score{layer="multivariate"}`
-  - 大規模環境向けオプションとして LSTM / Transformer オートエンコーダ（再構成誤差）も検討
-- [ ] `kizashi/models/logpattern.py` — 補助層: Loki ログのパターン異常検知
-  - Drain アルゴリズムでテンプレート分類（オンライン処理）
-  - テンプレートごとの出現件数をメトリクス化 → 第1層・第4層の入力として利用
-  - 過去未出現の新規テンプレート出現を予兆シグナルとして扱う
-- [ ] `kizashi/sources/loki.py` — Loki HTTP クライアント（LogQL クエリ）
-- [ ] トポロジ考慮のアラート集約
-  - LLDP / CDP から `kizashi_topology_parent` メトリクスを生成する仕組み
-  - Alertmanager `inhibit_rules` で上流障害時に配下の予兆を抑制
-- [ ] P2 向けテスト追加（`tests/test_multivariate.py`、`tests/test_logpattern.py`）
+- [x] `kizashi/models/multivariate.py` — 第3層: Isolation Forest による多変量異常検知
+  - グループキー（role × vendor）ごとに IsolationForest を学習・スコアリング（decision_function で0〜10スケール）
+  - NaN は列中央値で補完、特徴量行列は `build_feature_matrix()` で組み立て
+  - ModelStore に `save_multivariate` / `load_multivariate` 追加（JSON メタデータ + joblib バイナリ）
+- [x] `kizashi/models/logpattern.py` — 補助層: Loki ログのパターン異常検知
+  - Drain アルゴリズム（固定深さ前置木）によるオンラインテンプレート分類
+  - `mark_known()` / `iter_new()` で新規テンプレート検出、JSON でアトミック永続化
+- [x] `kizashi/sources/loki.py` — Loki HTTP クライアント（LogQL クエリ）
+  - `query_range` / `label_values` を stdlib のみで実装（追加依存なし）
+- [x] トポロジ考慮のアラート集約
+  - `rules/kizashi-topology.yml` — LLDP/CDP から `kizashi_topology_parent{instance, parent_instance}` 生成
+  - `rules/kizashi-alerts.yml` に `OpticDegradationPredictedWithTopology` 追加（`group_left(parent_instance)`）
+  - Alertmanager routing.yml に `equal: [parent_instance]` の inhibit_rules 追加済み（ADR-004）
+- [x] P2 向けテスト追加（`tests/test_multivariate.py` 22件、`tests/test_logpattern.py` 24件、計46件）
 
 完了条件: 誤報 ≤ 0.1 件 / 機器 / 週
 
