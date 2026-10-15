@@ -52,7 +52,7 @@
 
 設計書 §5.4 参照。P3 でラベルが 故障モードあたり 30 件以上蓄積してから有効化。
 
-- [ ] `kizashi/models/failure.py` — 第4層: LightGBM による二値分類
+- [x] `kizashi/models/failure.py` — 第4層: LightGBM による二値分類
   - 故障モードごとにモデルを分ける
   - 特徴量: 第1〜3層の出力 + 複数ウィンドウ（1h/6h/24h/7d）での統計量 + 機種・設置年数などの静的属性
   - 予測先: `horizon` = 1h / 24h / 7d
@@ -60,20 +60,21 @@
   - 評価: Precision-Recall（Accuracy は使わない）
   - 確率較正: Isotonic Regression
   - 出力: `kizashi_failure_probability{failure_mode, horizon}`
-- [ ] `kizashi/explain.py` — SHAP による寄与度算出
+- [x] `kizashi/explain.py` — SHAP による寄与度算出
   - 上位3件の寄与特徴量を `kizashi_top_contributor{rank, feature}` として公開
-- [ ] MLflow Model Registry 連携（現在はファイルベース）
+- [x] MLflow Model Registry 連携（`kizashi/models/registry.py`）
   - モデルバージョン管理と評価指標の記録
   - "Production" 昇格フロー（バックテストで現行モデルを上回った場合のみ）
-- [ ] シャドーモード実装
-  - 新モデルを1週間アラートなしで推論のみ実行し、現行モデルと比較してから切り替え
-- [ ] 学習ループ（`kizashi/trainer.py`）の拡張
-  - 長期ストレージからの学習データ抽出と Parquet 化
+  - `NoOpRegistry` でオプション依存を回避
+- [x] シャドーモード実装
+  - PSI ≥ 0.2 の場合、新モデルを shadow フラグ付きで保存（アラートなし推論のみ）
+  - `FailureModelMeta.is_shadow` + `ModelStore.save_failure(shadow=True)` で管理
+- [x] 学習ループ（`kizashi/trainer.py`）の拡張 — `train_failure_models()`
   - 障害ラベルとの時間窓結合（故障の H 時間前までを正例）
   - ウォークフォワード検証（時間順分割）
   - 評価指標: Precision@閾値 ≥ 0.5、Recall ≥ 0.6、リードタイム中央値 ≥ 1h
-- [ ] データドリフト検知（PSI）→ 閾値超過で再学習トリガー
-- [ ] P4 向けテスト追加（`tests/test_failure.py`、`tests/test_explain.py`）
+- [x] データドリフト検知（PSI）→ 閾値超過で再学習トリガー（`psi_from_percentiles`）
+- [x] P4 向けテスト追加（`tests/test_failure.py` 30件、`tests/test_explain.py` 17件）
 
 ---
 

@@ -386,8 +386,8 @@ by UTC hour. They realign once the next training run includes enough data from a
 |---|---|---|
 | P0 | Foundation: recording rules, inference loop, `/metrics` | ✅ Done |
 | P1 | Adaptive thresholds, trend forecast, alert rules | ✅ Done |
-| P2 | Multivariate anomaly detection, log patterns, topology-aware alert grouping | Planned |
-| P3 | Feedback API and failure label collection | Planned |
+| P2 | Multivariate anomaly detection, log patterns, topology-aware alert grouping | ✅ Done |
+| P3 | Feedback API and failure label collection | ✅ Done |
 | P4 | Supervised failure probability with explanations, MLflow model registry | Planned |
 | P5 | Service health scores | Planned |
 
@@ -426,4 +426,4 @@ docs/design.md          # design document (Japanese)
 
 ## License
 
-GNU General Public License v3.0 — see [LICENSE](LICENSE).
+GNU General Public License v3.0 (GPL-3.0-or-later) — Copyright (C) 2026 株式会社エージーネディア / agNedia Inc. — see [LICENSE](LICENSE).
