@@ -1,5 +1,9 @@
 # KIZASHI 設計書 — Prometheus 向け AI 故障予兆検知
 
+> **English design document** is available at the [bottom of this page](#english-design-document).
+
+
+
 ## 1. 目的とスコープ
 
 Splunk ITSI（Predictive Analytics / Adaptive Thresholding）や Splunk MLTK が提供する
@@ -526,3 +530,230 @@ KIZASHI/
 | 3 | 障害チケットシステム連携 | **Jira Service Management REST API v3**（`kizashi/sources/jira.py`） | `docs/decisions/003-jira-integration.md` |
 | 4 | 予兆アラートの通知先・対応フロー | Alertmanager routing + Slack/Jira/PagerDuty（`deploy/alertmanager/routing.yml`） | `docs/decisions/004-alert-routing.md` |
 | 5 | LLM による自然言語説明 | **Ollama**（オプション機能、`kizashi/llm.py`） | `docs/decisions/005-llm-explanation.md` |
+
+---
+
+<details>
+<summary id="english-design-document">English Design Document</summary>
+
+# KIZASHI Design — AI Failure Prediction for Prometheus
+
+## 1. Purpose and Scope
+
+KIZASHI brings the capabilities of Splunk ITSI (Predictive Analytics / Adaptive Thresholding) and Splunk MLTK — machine-learning-based failure prediction from metrics and logs — to the Prometheus ecosystem.
+
+| Splunk feature | KIZASHI equivalent |
+|---|---|
+| Adaptive Thresholding | Seasonal baseline + dynamic band (§5.1) |
+| Anomaly Detection (MLTK DensityFunction) | Univariate / multivariate anomaly score (§5.1, §5.3) |
+| `predict` command | Forecast value + time-to-threshold (§5.2) |
+| ITSI Predictive Analytics | Failure probability model (§5.4) + service health score (§6) |
+| Episode Review / Notable Event grouping | Topology-aware alert grouping (§8) |
+| Log pattern analysis (`cluster` command) | Loki log template clustering and metric export (§5.5) |
+
+**Out of scope**: modifying Prometheus itself. KIZASHI is an independent service; all I/O uses standard Prometheus interfaces (HTTP API / exposition / remote_write / rules).
+
+### Design principles
+
+1. **Prometheus-native**: prediction results are written back as ordinary metrics; alerts use PromQL rules; notifications use Alertmanager; dashboards use Grafana. Operators learn nothing new.
+2. **Incremental sophistication**: statistical methods (no training data required) → unsupervised anomaly detection → supervised failure prediction. Each layer delivers value on its own; if a higher layer is unavailable, lower layers remain active.
+3. **Explainability**: every predictive alert carries "which metric, by how much, and why." A score-only alert without rationale is quickly ignored in operations.
+
+### Implementation status (2026-10-15)
+
+**All phases P0–P5 are complete.**
+
+| Phase | Status | Key implementation files |
+|---|---|---|
+| P0 Foundation | ✅ Done | `inference.py`, `exporter.py`, `sources/prometheus.py`, `config.py`, `cli.py` |
+| P1 Statistical layers | ✅ Done | `models/baseline.py`, `models/trend.py`, `trainer.py`, `rules/kizashi-alerts.yml` |
+| P2 Unsupervised anomaly detection | ✅ Done | `models/multivariate.py`, `models/logpattern.py`, `sources/loki.py`, `topology.py` |
+| P3 Feedback loop | ✅ Done | `feedback.py`, `label_store.py` |
+| P4 Supervised failure probability | ✅ Done | `models/failure.py`, `explain.py`, `models/registry.py` |
+| P5 Service health score | ✅ Done | `health.py`, `examples/services.yaml`, `rules/kizashi-alerts.yml` |
+
+**Notable implementation divergences from the original design:**
+- **Feature Store**: originally S3/MinIO + Parquet; replaced with a JSONL append-only `LabelStore` for the initial deployment phase. Parquet migration is a future option.
+- **Model Registry**: file-based for P0–P3 (`models/<layer>/<key>.json` + `.pkl`, atomic writes, hot-reload). MLflow integration added in P4 (`models/registry.py`) but remains an optional dependency.
+- **Feedback API auth**: static Bearer token (env var); OIDC is a future option.
+- **Python version**: ≥ 3.11 (not 3.12 as originally specified).
+
+---
+
+## 2. Overall Architecture
+
+```
+Network devices
+  │ SNMP / gNMI / syslog / ICMP
+  ▼
+snmp_exporter / gnmic / blackbox_exporter ──scrape──▶ Prometheus ──alerts──▶ Alertmanager
+                                                       │     ▲                     │ webhook
+                                          query_range  │     │ scrape /metrics     │
+                                                       ▼     │                     ▼
+                                                      KIZASHI                  Feedback API
+                                                  ┌────────────────────┐
+                                                  │ Inference (1m loop) │
+                                                  │ Trainer  (daily)    │
+                                                  │ Feedback API        │
+                                                  └────────┬───────────┘
+                                                   Model Registry / Feature Store
+                                                   (file-based + optional MLflow + JSONL)
+                                                           │
+                                                           ▼
+                                                    Grafana (predictive dashboards)
+```
+
+### Components
+
+| Component | Role | Runtime |
+|---|---|---|
+| **Inference** | Queries the last window via PromQL every minute, runs all model layers, exposes results on `/metrics` | Deployment (always-on, shardable) |
+| **Trainer** | Extracts training data from long-term storage, fits and evaluates models, registers them | CronJob (daily / weekly) |
+| **Feedback API** | Receives Alertmanager webhooks and operator verdicts (true positive / false positive / resolved), saves them as labels | Deployment |
+| **Model Registry** | Manages model artifacts, versions, and evaluation metrics | File-based (`models/` directory) + MLflow (P4+, optional) |
+| **Feature Store** | Training feature snapshots and failure labels | JSONL append-only (`LabelStore`). Parquet / S3 is a future option |
+
+---
+
+## 5. Prediction Model (4+1 Layers)
+
+### Layer 1: Adaptive Thresholds (Statistical Baseline) ✅
+
+**No training data needed; works from day one.** Equivalent to Splunk Adaptive Thresholding.
+
+- **Method**: for each series, a seasonal profile (median per hour-of-week, 168 bins) defines the expected value. With 2 days to 2 weeks of history, hour-of-day (24 bins) is used instead. The spread is the MAD of the residuals — resistant to past-incident outliers. Implementation: `kizashi/models/baseline.py`.
+- **Anomaly score**: `|value − expected| / (1.4826 × MAD)` (robust z-score). 0 = normal, ≥ 3 is unusual.
+- Public holidays and maintenance windows (from Alertmanager silence data) are excluded from training.
+
+### Layer 2: Trend Forecast and Time-to-Threshold ✅
+
+**"How many hours until this metric hits its limit?"** Useful for optic degradation, memory leaks, link saturation.
+
+- **Method**: weighted least-squares (WLS) linear regression (`models/trend.py`). Time-to-threshold is published **only when the entire confidence interval points toward the limit**, so flat or noisy series stay quiet. Replaces Prometheus's `predict_linear()`, which lacks confidence intervals and is sensitive to spikes.
+- **Output**: forecast value with a prediction interval (10–90%), and estimated seconds until threshold crossing.
+
+### Layer 3: Multivariate Anomaly Detection ✅
+
+**Catches unusual combinations of metrics that look normal individually** (e.g., normal traffic but CPU spike; temperature rising while fan speed drops).
+
+- **Method**: Isolation Forest per device-role × vendor group (`models/multivariate.py`). NaN values are imputed with column medians. Scores are normalized 0–10 via a logistic transform of `decision_function`.
+- Training one model per series would produce hundreds of thousands of models; group-level sharing makes operations feasible.
+
+### Layer 4: Supervised Failure Probability ✅
+
+**"What is the probability that this device/interface will fail within the next H hours?"** Equivalent to ITSI Predictive Analytics. Activates once failure labels reach ≥ 30 per failure mode.
+
+- **Method**: LightGBM binary classifier per failure mode (`models/failure.py`). Separate models for horizons 1h / 24h / 7d.
+- **Class imbalance**: negative downsampling (default 10:1) + `scale_pos_weight`.
+- **Calibration**: `CalibratedClassifierCV(cv='prefit', method='isotonic')`.
+- **Promotion criteria** (walk-forward validation): Precision@0.5 ≥ 0.5, Recall ≥ 0.6, median lead time ≥ 1h.
+- **PSI drift detection**: feature percentiles are stored at training time. If PSI ≥ 0.2 on the next training run, the new model is saved in shadow mode (`FailureModelMeta.is_shadow = True`) and fires no alerts until promoted.
+- **SHAP explanations** (`explain.py`): top-3 contributors by |shap_value| published as `kizashi_top_contributor`.
+- **MLflow registry** (`models/registry.py`): optional (`kizashi[mlflow]`). `NoOpRegistry` is the drop-in when MLflow is not installed.
+
+### Auxiliary Layer: Log Pattern Anomalies ✅
+
+- Fetches syslog from Loki and classifies it into templates (e.g., `%LINK-3-UPDOWN: Interface <*>`) using the Drain algorithm (`models/logpattern.py`, Loki client: `sources/loki.py`).
+- Template occurrence counts are exported as metrics, fed into Layer 1 (count spikes) and Layer 4 (features).
+- **New templates** (never seen before) are treated as a predictive signal in their own right.
+
+---
+
+## 6. Service Health Score ✅
+
+Aggregates device-level anomaly signals at the service level, similar to ITSI Service / KPI. Implementation: `kizashi/health.py`.
+
+- Services are defined in a YAML file (`examples/services.yaml`) and validated by `validate_services_spec()`.
+- **Score formula**: `score = 100 − Σ_groups(group_weight × effective_norm_score) / total_weight × 100`
+  - Redundancy groups (same `redundancy_group`): `effective_score = min(member_scores)` — no deduction while at least one member is healthy.
+  - Singletons: each component contributes its normalized score directly.
+- **Future score (horizon=1h)**: computed from `kizashi_failure_probability{horizon="1h"}` when Layer 4 is active.
+- **Output**: `kizashi_health_score{service, horizon}` where horizon is `"now"` or `"1h"`.
+- **Alerts**: `ServiceHealthDegrading` (< 80, 10 m, warning) and `ServiceHealthCritical` (< 50, 5 m, critical).
+
+---
+
+## 7. Output Metrics
+
+| Metric | Extra labels | Description |
+|---|---|---|
+| `kizashi_expected_value` | — | Layer 1 expected value for the current hour |
+| `kizashi_band_lower` / `kizashi_band_upper` | — | Adaptive thresholds |
+| `kizashi_anomaly_score` | `layer` | Robust z-score |
+| `kizashi_time_to_threshold_seconds` | `threshold` | Estimated seconds until threshold crossing |
+| `kizashi_forecast_value` | `horizon`, `quantile` | Forecast at now + horizon (quantiles 0.1 / 0.5 / 0.9) |
+| `kizashi_failure_probability` | `failure_mode`, `horizon` | Calibrated failure probability [0, 1] |
+| `kizashi_top_contributor` | `failure_mode`, `rank`, `feature` | SHAP contribution value, top-3 per prediction |
+| `kizashi_health_score` | `service`, `horizon` | Service health score [0, 100] |
+| `kizashi_model_info` | `layer`, `version` | Model in use (always 1) |
+
+**Cardinality control**: `kizashi_forecast_value` and `kizashi_top_contributor` are only published for series whose anomaly score or failure probability exceeds a configured minimum.
+
+---
+
+## 9. Evaluation and Quality
+
+### Offline evaluation (at training time)
+
+| Metric | Meaning | Promotion threshold |
+|---|---|---|
+| Precision@alert threshold | Fraction of predictive alerts that correspond to actual failures | ≥ 0.5 |
+| Recall | Fraction of actual failures that had a prior predictive alert | ≥ 0.6 |
+| Median lead time | Time from first predictive alert to failure | ≥ 1 h |
+| False alerts / device / week | Operational burden | ≤ 0.1 |
+
+Time-series data requires **time-ordered (walk-forward) validation**, not random splits.
+
+### Online monitoring (in production)
+
+- **Data drift**: PSI on input feature distributions against stored percentile checkpoints. Threshold 0.1 = warn; 0.2 = shadow-mode retrain.
+- **Network topology changes**: device additions, replacements, or link upgrades shift the distribution; `TopologyStore` detects label-set changes and triggers retraining for affected devices.
+- **Shadow mode**: new models run for one week without firing alerts, then are compared with the production model before promotion.
+
+---
+
+## 12. Technology Stack
+
+| Purpose | Technology | Reason |
+|---|---|---|
+| Implementation language | Python ≥ 3.11 | Rich ML library ecosystem |
+| Statistics / forecasting | WLS regression (built-in), scikit-learn (Isolation Forest) | Lightweight, proven |
+| Supervised learning | LightGBM + SHAP | High accuracy on tabular data, feature attribution |
+| Deep learning (optional) | PyTorch | Autoencoder for large-scale environments |
+| Log analysis | Drain algorithm (custom implementation) | Online template extraction |
+| Metrics exposition | prometheus_client | Standard library |
+| API | FastAPI | Feedback API, health checks |
+| Model management | File-based (required) + MLflow (optional via `kizashi[mlflow]`) | Version control and metric recording |
+| Data storage | JSONL append-only (required). Parquet / S3 is a future option | Failure label persistence |
+| Deployment | Kubernetes + Helm (`deploy/helm/`) | Deploys alongside Prometheus Operator |
+
+---
+
+## 14. Deployment Roadmap
+
+| Phase | Duration | Scope | Done criteria |
+|---|---|---|---|
+| **P0: Foundation** ✅ | 2 w | Recording rules, inference skeleton, `/metrics`, Grafana dashboards | Target metrics collected and exposed |
+| **P1: Statistical layers** ✅ | 3 w | Layer 1 (adaptive thresholds), Layer 2 (time-to-threshold), alert rules | Optic degradation detected 72 h in advance |
+| **P2: Unsupervised** ✅ | 4 w | Layer 3 (multivariate), log patterns, topology-aware alert grouping | False alerts ≤ 0.1 / device / week |
+| **P3: Feedback** ✅ | 3 w | Feedback API, failure label collection, Alertmanager integration | Labels accumulating continuously |
+| **P4: Supervised** ✅ | 4 w | Layer 4 (failure probability), SHAP explanations, shadow mode | Walk-forward promotion criteria met |
+| **P5: Service** ✅ | 3 w | Service health score, future health forecast | Health scores shown for key services |
+
+**All six phases complete as of 2026-10-15.**
+
+---
+
+## 15. Resolved Architectural Decisions
+
+All five open questions from the original design have been resolved. See `docs/decisions/` for details.
+
+| # | Question | Decision | ADR |
+|---|---|---|---|
+| 1 | Long-term storage selection | **VictoriaMetrics** (13-month retention) | `docs/decisions/001-long-term-storage.md` |
+| 2 | Vendor-specific DOM value normalization | snmp_exporter modules + Prometheus recording rules (`rules/snmp-normalization/`) | `docs/decisions/002-dom-normalization.md` |
+| 3 | Failure ticket system integration | **Jira Service Management REST API v3** (`kizashi/sources/jira.py`) | `docs/decisions/003-jira-integration.md` |
+| 4 | Predictive alert routing and response workflow | Alertmanager routing + Slack/Jira/PagerDuty (`deploy/alertmanager/routing.yml`) | `docs/decisions/004-alert-routing.md` |
+| 5 | LLM-based natural-language explanation | **Ollama** (optional feature, `kizashi/llm.py`) | `docs/decisions/005-llm-explanation.md` |
+
+</details>

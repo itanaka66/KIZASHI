@@ -201,3 +201,88 @@ targets:
 ```
 
 `transceiver_type` ラベルは snmp_exporter の `metric_relabel_configs` で `entPhySensorDescr` または Juniper/Arista の該当 OID から付与する。
+
+---
+
+<details>
+<summary>English</summary>
+
+# ADR-002: Vendor-Specific Optical Module DOM Value Normalization
+
+**Status**: Decided  
+**Date**: 2026-10-15
+
+## Background
+
+Digital Optical Monitoring (DOM) values — receive power, transmit power, temperature, and bias current — are exposed by each vendor under different MIBs and gNMI paths, with different units and scaling factors. KIZASHI's Layer 1 and Layer 2 expect unified metric names, so a normalization layer is required.
+
+Target vendors: **Cisco IOS/IOS-XE, Cisco NX-OS, Juniper Junos, Arista EOS**
+
+## Decision: Two-stage normalization — snmp_exporter module + Prometheus recording rules
+
+### Normalized standard metric names
+
+| Metric | Unit | Description |
+|---|---|---|
+| `kizashi:optic_rx_dbm:avg5m` | dBm | Receive optical power (from recording rule) |
+| `kizashi:optic_tx_dbm:avg5m` | dBm | Transmit optical power |
+| `kizashi:optic_temp_celsius:avg5m` | °C | Module temperature |
+| `kizashi:optic_bias_ma:avg5m` | mA | Laser bias current |
+
+All are 5-minute averages (`avg_over_time(...[5m])`), labeled with `{instance, ifIndex, ifName, vendor}`.
+
+## Vendor Mapping
+
+### Cisco IOS / IOS-XE — ENTITY-SENSOR-MIB
+
+snmp_exporter reads `entPhySensorValue`. `entPhySensorType=15` covers optical power and temperature. `entPhySensorPrecision=1` means divide by 10.
+
+### Cisco NX-OS — CISCO-ENTITY-SENSOR-MIB
+
+Different OID branch (`.1.3.6.1.4.1.9.9.91`) but same structure. Precision is typically 1 (÷10).
+
+### Juniper Junos — JUNIPER-DOM-MIB
+
+Values are in 0.001 dBm / 0.001 °C / 0.001 mA — divide by 1000.
+
+| OID | Description | Conversion |
+|---|---|---|
+| `jnxDomCurrentRxLaserPower` | Receive power | ÷ 1000 → dBm |
+| `jnxDomCurrentTxLaserOutputPower` | Transmit power | ÷ 1000 → dBm |
+| `jnxDomCurrentModuleTemperature` | Temperature | ÷ 1000 → °C |
+| `jnxDomCurrentTxLaserBiasCurrent` | Bias current | ÷ 1000 → mA |
+
+### Arista EOS — ENTITY-SENSOR-MIB (precision=4)
+
+Standard ENTITY-SENSOR-MIB but `entPhySensorPrecision=4` (÷10,000).
+
+## Alternative: gNMI / OpenConfig (recommended for new environments)
+
+Juniper and Arista expose DOM values directly in dBm via gNMI OpenConfig paths. No MIB conversion is needed; the same recording rules can generate the unified metric names.
+
+```
+/interfaces/interface/transceiver/physical-channels/channel/state/input-power/instant
+```
+
+## Per-module Threshold Management
+
+Configured in `examples/kizashi.yaml` via `thresholds.by_label`:
+
+```yaml
+targets:
+  - metric: kizashi:optic_rx_dbm:avg5m
+    thresholds:
+      - name: rx_low
+        direction: below
+        by_label: transceiver_type
+        values:
+          10GBASE-LR:     -14.4
+          10GBASE-SR:      -9.9
+          100GBASE-LR4:   -10.6
+          100GBASE-CWDM4: -13.0
+          400GBASE-DR4:   -11.0
+```
+
+The `transceiver_type` label is applied via `metric_relabel_configs` in snmp_exporter from `entPhySensorDescr` or the equivalent OID for Juniper / Arista.
+
+</details>

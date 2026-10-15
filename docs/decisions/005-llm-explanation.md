@@ -104,3 +104,93 @@ LLM 説明文は以下のルートで配信する:
 - `kizashi/llm.py` — Ollama クライアント実装
 - `kizashi/sources/jira.py` — 説明文の Jira 書き込み
 - `docs/decisions/003-jira-integration.md`
+
+---
+
+<details>
+<summary>English</summary>
+
+# ADR-005: LLM-Based Natural-Language Explanation (Ollama, Optional)
+
+**Status**: Decided  
+**Date**: 2026-10-15
+
+## Background
+
+KIZASHI outputs anomaly scores, failure probabilities, and SHAP top contributors as numbers. Network operators benefit from a concise natural-language summary of "why is this alert firing?" and "what should I do?" to reduce triage time.
+
+## Decision: Ollama (local LLM) as an optional feature
+
+### Rationale
+
+| Criterion | Ollama (local) | OpenAI API (cloud) |
+|---|---|---|
+| Data privacy | ◎ Device names and IPs never leave the network | △ Sent to third party |
+| Cost | ◎ One-time GPU server cost | △ Per-token billing |
+| Latency | ○ GPU: 1–3 s / CPU: 5–15 s | ◎ 1–2 s |
+| Offline operation | ◎ | ✗ |
+| Ease of deployment | ◎ `docker run` single command | ◎ |
+
+Local LLM is the first choice to avoid exposing device names, IPs, and vendor information to external APIs. The feature is completely optional: if `llm.url` is not configured, no explanation is generated.
+
+Implementation: `kizashi/llm.py`
+
+## Recommended Models
+
+| Model | Requirements | Quality | Speed |
+|---|---|---|---|
+| `qwen2.5:14b` | GPU (≥16 GB VRAM) | ◎ Natural technical explanations | ◎ |
+| `qwen2.5:7b` | CPU / GPU (8 GB VRAM) | ○ | ○ |
+| `qwen2.5:3b` | ≤8 GB RAM | △ | ◎ |
+| `llama3.2:3b` | CPU only, low memory | △ | ◎ |
+
+Qwen2.5 handles Japanese and network engineering terminology well.
+
+## Prompt Design
+
+### Input context sent to Ollama
+
+```
+Device: {instance}
+Interface: {ifName}
+Anomaly type: {failure_mode}
+Anomaly score: {anomaly_score:.1f} / 10.0
+Estimated time to threshold: {time_to_threshold_h:.0f} h
+Top contributing factors:
+  1. {contributor_1}: {value_1} ({pct_1}% above average)
+  2. {contributor_2}: {value_2} ({pct_2}% above average)
+  3. {contributor_3}: {value_3} ({pct_3}% above average)
+```
+
+### System prompt
+
+```
+You are a network operations expert. Based on the KIZASHI anomaly data,
+output in Japanese (or English as configured):
+1. A concise explanation of what is happening (1–2 sentences)
+2. Recommended inspection / remediation steps (3–5 bullet points)
+```
+
+## KIZASHI Configuration
+
+```yaml
+llm:
+  url: http://ollama:11434
+  model: qwen2.5:14b
+  timeout: 30s
+  # max_tokens: 512
+```
+
+## Output Destinations
+
+1. **Slack notification**: appended to the `details` field via the Alertmanager webhook payload.
+2. **Jira ticket**: added as a "KIZASHI AI Explanation" section in the ticket description.
+3. **Prometheus metrics**: not stored as metrics (would cause cardinality explosion).
+
+## References
+
+- `kizashi/llm.py` — Ollama client implementation
+- `kizashi/sources/jira.py` — writes explanation to Jira
+- `docs/decisions/003-jira-integration.md`
+
+</details>

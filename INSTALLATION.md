@@ -1,4 +1,6 @@
-# Installing KIZASHI
+# Installing KIZASHI / KIZASHI インストールガイド
+
+> 日本語ドキュメントは [このページの末尾](#インストールガイド日本語) にあります。
 
 This guide installs the `kizashi` program. To connect it to your Prometheus, configure
 targets, and turn on alerts, continue with [SETUP.md](SETUP.md) afterwards.
@@ -220,3 +222,218 @@ docker volume rm kizashi-models
 
 Also remove the `kizashi` scrape job and the KIZASHI rule files from your Prometheus
 configuration.
+
+---
+
+<details>
+<summary id="インストールガイド日本語">インストールガイド（日本語）</summary>
+
+## KIZASHI インストールガイド
+
+このガイドでは `kizashi` プログラムのインストール方法を説明します。Prometheus との接続設定、ターゲットの設定、アラートの有効化は、インストール後に [SETUP.md](SETUP.md) を参照してください。
+
+KIZASHI は**モデルディレクトリを共有する 2 つのプロセス**として動作します:
+
+- `kizashi serve`: 常駐サービス。1 分ごとに Prometheus にクエリし、予測結果をポート 9850 の `/metrics` で公開します。
+- `kizashi train`: 日次ジョブ。ベースラインと故障確率モデルを学習します。
+
+インストール方法を選択してください:
+
+| 方法 | 適するケース |
+|---|---|
+| [Linux サーバー（systemd）](#linux-サーバーsystemd) | Prometheus が VM またはベアメタルで動いている（推奨） |
+| [Docker](#docker-1) | Prometheus と各エクスポーターをコンテナで動かしている |
+| [ローカル試用](#ローカル試用) | まずワークステーションで試したい |
+
+Kubernetes マニフェストと Helm Chart は `deploy/helm/` に含まれています。`serve` を Deployment、`train` を CronJob として、共有ボリュームとともにデプロイしてください。
+
+## 前提条件
+
+| 要件 | 詳細 |
+|---|---|
+| Python | 3.11 以降（Docker の場合は不要） |
+| ネットワーク | KIZASHI から Prometheus HTTP API へのアクセス、Prometheus から KIZASHI のポート 9850 へのアクセスが必要 |
+| ディスク | ベースライン1系列あたり約 3.5 KB（10 万系列で約 350 MB） |
+| メモリ | 1 系列あたり約 6 KB（モデルリロード中は約 10 KB に増加） |
+| Prometheus | 2.x または 3.x（Thanos Query / Mimir / VictoriaMetrics でも可） |
+
+Prometheus API が KIZASHI を実行するマシンから到達できることを確認してください:
+
+```sh
+curl -s 'http://prometheus.example:9090/api/v1/query?query=up' | head -c 200
+# {"status":"success","data":{"resultType":"vector","result":[...
+```
+
+## Linux サーバー（systemd）
+
+KIZASHI を `/opt/kizashi` にインストールし、設定を `/etc/kizashi`、モデルを `/var/lib/kizashi` に保存します。root で実行してください。
+
+**1. サービスユーザーを作成する。**
+
+```sh
+useradd --system --no-create-home --shell /usr/sbin/nologin kizashi
+```
+
+**2. 仮想環境に KIZASHI をインストールする。**
+
+```sh
+python3 -m venv /opt/kizashi
+/opt/kizashi/bin/pip install /path/to/kizashi   # このリポジトリのチェックアウト
+/opt/kizashi/bin/kizashi --help
+```
+
+P4 の LightGBM / SHAP 機能を使う場合:
+
+```sh
+/opt/kizashi/bin/pip install '/path/to/kizashi[p4]'
+```
+
+**3. 設定ファイルをインストールする。**
+
+```sh
+install -d -m 755 /etc/kizashi
+install -m 640 -g kizashi /path/to/kizashi/examples/kizashi.yaml /etc/kizashi/kizashi.yaml
+```
+
+`/etc/kizashi/kizashi.yaml` を編集して `models.dir` を `/var/lib/kizashi/models` に設定します（サンプルではこのパスが既定値になっています）。Prometheus URL とターゲットの設定は [SETUP.md](SETUP.md) を参照してください。
+
+**4. systemd ユニットをインストールする。**
+
+```sh
+cp /path/to/kizashi/deploy/systemd/kizashi.service \
+   /path/to/kizashi/deploy/systemd/kizashi-train.service \
+   /path/to/kizashi/deploy/systemd/kizashi-train.timer \
+   /etc/systemd/system/
+systemctl daemon-reload
+```
+
+| ユニット | 役割 |
+|---|---|
+| `kizashi.service` | `kizashi serve` を実行。失敗時に自動再起動 |
+| `kizashi-train.service` | `kizashi train` を1回実行 |
+| `kizashi-train.timer` | 毎日 03:15 に `kizashi-train.service` を起動 |
+
+systemd は初回起動時に `StateDirectory=kizashi` で `/var/lib/kizashi` を適切なオーナーで作成します。
+
+`KIZASHI_LONG_TERM_URL` やシャード設定などの環境変数は `/etc/default/kizashi` に記述します（両サービスが読み込みます）:
+
+```sh
+# /etc/default/kizashi
+KIZASHI_LONG_TERM_URL=http://victoriametrics.example:8428
+```
+
+**5. [SETUP.md](SETUP.md) の設定が完了したらサービスを起動する。**
+
+```sh
+systemctl start kizashi-train.service      # 初回学習（少し時間がかかります）
+systemctl enable --now kizashi.service kizashi-train.timer
+```
+
+ログの確認:
+
+```sh
+journalctl -u kizashi.service -f
+journalctl -u kizashi-train.service
+```
+
+## Docker
+
+**1. イメージをビルドする。**
+
+```sh
+docker build -t kizashi:0.1.0 .
+```
+
+イメージは非特権ユーザー（UID 10001）で動作します。デフォルトで `kizashi serve --config /etc/kizashi/kizashi.yaml` を実行します。
+
+**2. 設定ファイルを準備する。**
+
+```sh
+mkdir -p /etc/kizashi
+cp examples/kizashi.yaml /etc/kizashi/kizashi.yaml
+```
+
+`models.dir: /var/lib/kizashi/models` のまま（サンプル設定のデフォルト値）にしてください。
+
+**3. 名前付きボリュームでサービスを起動する。**
+
+```sh
+docker volume create kizashi-models
+
+docker run -d --name kizashi --restart unless-stopped \
+  -p 9850:9850 \
+  -v /etc/kizashi:/etc/kizashi:ro \
+  -v kizashi-models:/var/lib/kizashi/models \
+  kizashi:0.1.0
+```
+
+**4. ホスト上の cron で学習をスケジュールする。**
+
+```cron
+15 3 * * *  docker run --rm -v /etc/kizashi:/etc/kizashi:ro -v kizashi-models:/var/lib/kizashi/models kizashi:0.1.0 train --config /etc/kizashi/kizashi.yaml
+```
+
+Prometheus が Docker ネットワーク内にある場合は `--network <name>` で同じネットワークに接続し、`prometheus.url` にコンテナ名を使用してください。
+
+## ローカル試用
+
+```sh
+git clone <リポジトリURL> kizashi && cd kizashi
+python3 -m venv .venv
+.venv/bin/pip install .
+
+cp examples/kizashi.yaml kizashi.yaml
+# prometheus.url を編集し、models.dir を ./models に設定し、ターゲットを1つに絞る
+.venv/bin/kizashi serve -c kizashi.yaml --once
+```
+
+`--once` は推論を1サイクル実行して結果を表示します。Prometheus 側の変更は不要です。
+
+## インストールの確認
+
+サービス起動後:
+
+```sh
+curl -s http://localhost:9850/metrics | grep -E '^kizashi_(last_inference|inference_series|query_errors)'
+```
+
+以下を確認してください:
+
+- `kizashi_last_inference_timestamp_seconds` が存在し、1分ごとに更新されている
+- `kizashi_inference_series` がターゲットごとに 0 より大きい
+- `kizashi_query_errors_total` がない、または増加していない
+
+`kizashi_inference_series` がターゲットに対してない場合はクエリが失敗しています。サービスのログで原因を確認してください。
+
+## アップグレード
+
+```sh
+# systemd
+/opt/kizashi/bin/pip install --upgrade /path/to/kizashi
+systemctl restart kizashi.service
+
+# Docker
+docker build -t kizashi:<新バージョン> .
+docker rm -f kizashi   # その後、新しいタグで再起動
+```
+
+モデルファイルはアップグレード後も保持されます。リリースノートにモデルフォーマットの変更が記載されている場合は、アップグレード後に一度 `train` を実行してください。
+
+## アンインストール
+
+```sh
+# systemd
+systemctl disable --now kizashi.service kizashi-train.timer
+rm /etc/systemd/system/kizashi.service /etc/systemd/system/kizashi-train.{service,timer}
+systemctl daemon-reload
+rm -rf /opt/kizashi /etc/kizashi /var/lib/kizashi /etc/default/kizashi
+userdel kizashi
+
+# Docker
+docker rm -f kizashi
+docker volume rm kizashi-models
+```
+
+Prometheus の設定から `kizashi` スクレイプジョブと KIZASHI のルールファイルも削除してください。
+
+</details>

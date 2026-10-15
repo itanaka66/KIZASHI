@@ -77,3 +77,72 @@ jira:
 
 - `kizashi/sources/jira.py` — 実装
 - `docs/decisions/004-alert-routing.md` — フィードバックループ
+
+---
+
+<details>
+<summary>English</summary>
+
+# ADR-003: Failure Ticket System Integration (Jira Service Management)
+
+**Status**: Decided  
+**Date**: 2026-10-15
+
+## Background
+
+Automatically creating Jira Service Management (JSM) tickets for predictive alerts integrates the KIZASHI response workflow with the existing ITSM process, enabling assignee management and tracking.
+
+## Decision: Alertmanager webhook → KIZASHI Feedback API → Jira REST API v3
+
+### Rationale
+
+The Alertmanager webhook receiver forwards alert fire / resolved events to KIZASHI, and KIZASHI calls the Jira API. This allows:
+- Jira ticket creation and KIZASHI feedback label recording in one place.
+- Jira credentials are not stored in Alertmanager.
+
+Implementation: `kizashi/sources/jira.py`
+
+## Failure Mode Classification
+
+| `failure_mode` | Cause | Typical response |
+|---|---|---|
+| `optic_failure` | Optical module degradation (Rx power drop) | Module replacement (order early given lead times) |
+| `link_flap` | Link flapping (physical layer instability) | Check cable / connector / SFP |
+| `traffic_saturation` | Bandwidth saturation | Upgrade or traffic engineering |
+| `memory_leak` | Memory leak (monotonically decreasing free memory) | Reboot or software update |
+| `bgp_instability` | BGP instability (excessive neighbor transitions) | Review route policy / timers |
+| `hardware_degradation` | Chassis hardware degradation (temperature / PSU) | On-site inspection / parts replacement |
+| `anomaly_baseline` | Baseline anomaly (unknown cause) | Investigation ticket |
+
+## API Endpoints
+
+| Operation | Endpoint |
+|---|---|
+| Search for existing ticket (deduplication) | `GET /rest/api/3/issue/picker?query=...` |
+| Create ticket | `POST /rest/api/3/issue` |
+| Add comment (on alert resolved) | `POST /rest/api/3/issue/{key}/comment` |
+| Transition status | `POST /rest/api/3/issue/{key}/transitions` |
+
+## Authentication
+
+API token (Basic auth): `Authorization: Basic base64(email:api_token)`  
+Token stored in a Kubernetes Secret, passed as env var `JIRA_API_TOKEN`.
+
+## KIZASHI Configuration
+
+```yaml
+jira:
+  url: https://your-org.atlassian.net
+  email: kizashi-bot@your-org.com
+  api_token_env: JIRA_API_TOKEN
+  project_key: NWOPS
+  issue_type: Incident
+  dedup_label: kizashi-alert-id
+```
+
+## References
+
+- `kizashi/sources/jira.py` — implementation
+- `docs/decisions/004-alert-routing.md` — feedback loop
+
+</details>
