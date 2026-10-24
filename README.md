@@ -2,7 +2,7 @@
 
 **AI-based failure prediction for network monitoring on Prometheus.**
 
-KIZASHI (兆し, "early sign") brings Splunk ITSI-style adaptive thresholds and predictive
+KIZASHI (兆し, "early sign") brings IT-Service-Intelligence-style adaptive thresholds and predictive
 alerts to a Prometheus stack. It learns what "normal" looks like for every interface and
 device, flags deviations, and estimates how long until a degrading metric — optical power,
 error rate, utilization — crosses a limit, so you can act before the link fails.
